@@ -57,6 +57,10 @@ describe("health card rendering", () => {
     expect(sanitized).not.toContain("session=private");
     expect(sanitizeHealthText("Cookie: theme=light; session=private")).not.toContain("session=private");
     expect(sanitizeHealthText("DB_PASSWORD=private")).not.toContain("DB_PASSWORD=private");
+    expect(sanitizeHealthText("DB_PASSWORD=alpha,SECRET-SUFFIX")).not.toContain("SECRET-SUFFIX");
+    const cookieArray = sanitizeHealthText(String.raw`{"set-cookie":["first-session","second-session"],"other":"visible"}`);
+    expect(cookieArray).not.toContain("second-session");
+    expect(cookieArray).toContain("visible");
     expect(sanitizeHealthText("Response: 500; file.csv: value")).toContain("Response: 500; file.csv: value");
   });
 
@@ -249,5 +253,15 @@ describe("health card rendering", () => {
     expect(body).not.toContain("sig=");
     expect(body).not.toContain("fragment");
     expect(JSON.parse(body).attachments[0].content.actions[0].url).toBe("https://reports.acme.example/index.html");
+  });
+
+  it("rejects results links that canonicalize to the configured webhook", () => {
+    const summary = aggregateHealth({ allTests: () => [] } as unknown as Suite, compileCategories());
+    const webhookUrl = "https://tenant.webhook.office.com:443/webhookb2/tenant/IncomingWebhook/private-token/id";
+    const resultUrl = "https://TENANT.webhook.office.com/webhookb2/tenant/IncomingWebhook/private-token/id";
+    const card = JSON.parse(buildHealthMessage(summary, { linkToResultsUrl: resultUrl }, {
+      status: "failed", duration: 0, errors: [],
+    }, webhookUrl)).attachments[0].content;
+    expect(card.actions).toEqual([]);
   });
 });

@@ -78,9 +78,30 @@ function findQuotedSecretEnd(value: string, start: number, quote: string, escape
   return value.length;
 }
 
-function findUnquotedSecretEnd(value: string, start: number): number {
+function findArraySecretEnd(value: string, start: number): number {
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
   let index = start;
-  while (index < value.length && !/[\s,;}]/.test(value[index])) index += 1;
+  for (; index < value.length && value[index] !== "\n"; index += 1) {
+    const character = value[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') quoted = false;
+      continue;
+    }
+    if (character === '"') quoted = true;
+    else if (character === "[") depth += 1;
+    else if (character === "]" && --depth === 0) return index + 1;
+  }
+  return index;
+}
+
+function findUnquotedSecretEnd(value: string, start: number): number {
+  if (value[start] === "[") return findArraySecretEnd(value, start);
+  let index = start;
+  while (index < value.length && !/\s/.test(value[index])) index += 1;
   return index;
 }
 
@@ -181,7 +202,8 @@ function addResultsAction(options: HealthDisplayOptions, webhookUrl: string | un
     const value = typeof options.linkToResultsUrl === "function" ? options.linkToResultsUrl() : options.linkToResultsUrl;
     if (typeof value !== "string" || !value || value.length > 2000) return [];
     const url = new URL(value);
-    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || redactWebhookUrl(value, webhookUrl) !== value) return [];
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password ||
+      redactWebhookUrl(value, webhookUrl) !== value || redactWebhookUrl(url.href, webhookUrl) !== url.href) return [];
     if (options.resultsLinkPolicy !== "preserve") { url.search = ""; url.hash = ""; }
     if (url.href.length > 2000) return [];
     return [{ type: "Action.OpenUrl", title: clean(options.linkToResultsText ?? "View test results", 100), url: url.href }];
