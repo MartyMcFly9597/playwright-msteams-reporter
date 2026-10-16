@@ -77,6 +77,16 @@ describe("health card rendering", () => {
     expect(wrapped).not.toContain("secret");
     expect(wrapped).toContain("visible");
     expect(sanitizeHealthText(String.raw`{"password":"part1\" part2","client_secret":"secret2"}`)).not.toContain("part2");
+    expect(sanitizeHealthText(String.raw`{"password":"part1\"} part2","client_secret":"secret2"}`)).not.toContain("part2");
+    const trailingSlash = sanitizeHealthText(String.raw`{"password":"ends\\","other":"visible"}`);
+    expect(trailingSlash).not.toContain("ends");
+    expect(trailingSlash).toContain("visible");
+    expect(sanitizeHealthText(String.raw`Received: "{\"password\":\"part1\\\"} part2\",\"client_secret\":\"secret2\"}"`)).not.toContain("part2");
+    expect(sanitizeHealthText(String.raw`{"password":"part1\\","other":"visible"}`)).toContain("visible");
+    const nested = JSON.stringify(JSON.stringify({ password: 'part1"} part2', client_secret: "secret2", other: "visible" }));
+    expect(sanitizeHealthText(nested)).not.toContain("part2");
+    expect(sanitizeHealthText(nested)).not.toContain("secret2");
+    expect(sanitizeHealthText(nested)).toContain("visible");
   });
 
   it("enforces the envelope byte limit when runner errors fill the detail section", () => {

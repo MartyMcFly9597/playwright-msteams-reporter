@@ -36,7 +36,7 @@ const sensitiveFields = [
   "sharedaccesskey", "accountkey", "authorization", "signature", "password", "passwd", "secret",
   "cookie", "api-key", "api_key", "token", "pwd", "sig", "sv", "se", "sp", "sr", "skoid", "sktid", "skt", "ske", "sks", "skv",
 ];
-const sensitiveFieldStart = new RegExp(String.raw`(^|[^\w-])(?:\\)?(["']?)(${sensitiveFields.join("|")})(?:\\)?\2(?:\\)?\s*[:=]\s*(?:\\)?(["'])?`, "gi");
+const sensitiveFieldStart = new RegExp(String.raw`(^|[^\w-])(?:\\)?(["']?)(${sensitiveFields.join("|")})(?:\\)?\2(?:\\)?\s*[:=]\s*(\\)?(["'])?`, "gi");
 const homePathPattern = /\b[A-Z]:(?:[\\/]+)Users[\\/]+[^\\/"'\r\n]+|\/(?:Users|home)\/[^/"'\r\n]+/gi;
 const markdownCharacters = new Set(["\\", "`", "*", "_", "{", "}", "[", "]", "(", ")", "#", "+", "!", "|", ">"]);
 
@@ -59,18 +59,21 @@ function sanitizeUrl(value: string): string {
 
 function endsEscapedJsonValue(value: string, quoteIndex: number): boolean {
   const following = value.slice(quoteIndex + 1).trimStart();
-  return following === "" || /^[}\]]/.test(following) || /^,\s*(?:\\)?["'][^"'\r\n]+(?:\\)?["']\s*:/.test(following);
+  return /^,\s*(?:\\)?["'][^"'\r\n]+(?:\\)?["']\s*:/.test(following) ||
+    /^(?:\\)?[}\]](?:\\)?["']?(?:\s*(?:[,;)]|$))/.test(following);
 }
 
-function isSecretValueEnd(value: string, index: number, quote: string): boolean {
+function isSecretValueEnd(value: string, index: number, quote: string, escapedOpeningQuote: boolean): boolean {
   if (value[index] !== quote) return false;
-  const escaped = value[index - 1] === "\\";
-  return !escaped || endsEscapedJsonValue(value, index);
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) backslashes += 1;
+  if (backslashes % 2 === 0) return true;
+  return escapedOpeningQuote && endsEscapedJsonValue(value, index);
 }
 
-function findQuotedSecretEnd(value: string, start: number, quote: string): number {
+function findQuotedSecretEnd(value: string, start: number, quote: string, escapedOpeningQuote: boolean): number {
   for (let index = start; index < value.length; index += 1) {
-    if (isSecretValueEnd(value, index, quote)) return index + 1;
+    if (isSecretValueEnd(value, index, quote, escapedOpeningQuote)) return index + 1;
   }
   return value.length;
 }
@@ -81,8 +84,8 @@ function findUnquotedSecretEnd(value: string, start: number): number {
   return index;
 }
 
-function findSecretEnd(value: string, start: number, quote?: string): number {
-  return quote ? findQuotedSecretEnd(value, start, quote) : findUnquotedSecretEnd(value, start);
+function findSecretEnd(value: string, start: number, quote?: string, escapedOpeningQuote = false): number {
+  return quote ? findQuotedSecretEnd(value, start, quote, escapedOpeningQuote) : findUnquotedSecretEnd(value, start);
 }
 
 function redactSensitiveFields(value: string): string {
@@ -91,8 +94,9 @@ function redactSensitiveFields(value: string): string {
   sensitiveFieldStart.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = sensitiveFieldStart.exec(value)) !== null) {
-    const quote = match[4];
-    const valueEnd = findSecretEnd(value, sensitiveFieldStart.lastIndex, quote);
+    const escapedOpeningQuote = Boolean(match[4]);
+    const quote = match[5];
+    const valueEnd = findSecretEnd(value, sensitiveFieldStart.lastIndex, quote, escapedOpeningQuote);
     output += `${value.slice(copiedThrough, match.index)}${match[1]}${match[2]}${match[3]}${match[2]}: <redacted>`;
     copiedThrough = valueEnd;
     sensitiveFieldStart.lastIndex = valueEnd;
