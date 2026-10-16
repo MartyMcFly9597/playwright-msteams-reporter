@@ -40,7 +40,14 @@ describe("optional health reporter", () => {
 
   it("reports signal evidence on the final successful flaky attempt", async () => {
     const reporter = new HealthReporter({ webhookUrl, quiet: true });
-    reporter.onBegin({} as FullConfig, suite("flaky", ["http-5xx"]));
+    const flakySuite = { allTests: () => [{
+      id: "flaky-final-signal", titlePath: () => ["flaky-final-signal"], outcome: () => "flaky", expectedStatus: "passed",
+      results: [
+        { status: "failed", annotations: [], errors: [] },
+        { status: "passed", annotations: [{ type: "env-signal:http-5xx" }], errors: [] },
+      ],
+    }] } as unknown as Suite;
+    reporter.onBegin({} as FullConfig, flakySuite);
     await reporter.onEnd(result);
     expect(global.fetch).toHaveBeenCalledTimes(1);
     const body = String(jest.mocked(global.fetch).mock.calls[0][1]?.body);

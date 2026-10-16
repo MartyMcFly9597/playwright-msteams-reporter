@@ -153,7 +153,9 @@ function recordTest(test: TestCase, state: AggregationState): void {
   const historical = results.slice(0, -1).some(attempt =>
     (kindsFor(attempt, annotationPrefix) ?? []).some(kind => !taxonomy.forKind(kind).noise));
   if (historical) summary.previousAttemptsWithSignals += 1;
-  if (outcome === "flaky" && (historical || realKinds.length > 0)) summary.recoveredWithSignals += 1;
+  const finalAttemptExpected = result?.status === test.expectedStatus &&
+    result.status !== "skipped" && result.status !== "interrupted";
+  if (outcome === "flaky" && finalAttemptExpected && (historical || realKinds.length > 0)) summary.recoveredWithSignals += 1;
   if (result?.status === "passed" && outcome === "expected" && realKinds.length) summary.passedWithSignals += 1;
   if (outcome === "unexpected") recordUnexpected(test, result, realKinds, state);
 }

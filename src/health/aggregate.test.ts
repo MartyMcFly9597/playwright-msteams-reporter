@@ -21,7 +21,7 @@ describe("health aggregation", () => {
 
   it("keeps retries, noise and interrupted final evidence separate", () => {
     const suite = { allTests: () => [{
-      id: "recovered", titlePath: () => ["recovered"], outcome: () => "flaky",
+      id: "recovered", titlePath: () => ["recovered"], outcome: () => "flaky", expectedStatus: "passed",
       results: [
         { status: "failed", annotations: [{ type: "env-signal:http-5xx" }], errors: [] },
         { status: "passed", annotations: [{ type: "env-signal:ambient" }], errors: [] },
@@ -48,7 +48,7 @@ describe("health aggregation", () => {
 
   it("counts final-pass signals from flaky retries as recovered evidence", () => {
     const suite = { allTests: () => [{
-      id: "flaky-final-signal", titlePath: () => ["flaky-final-signal"], outcome: () => "flaky",
+      id: "flaky-final-signal", titlePath: () => ["flaky-final-signal"], outcome: () => "flaky", expectedStatus: "passed",
       results: [
         { status: "failed", annotations: [], errors: [] },
         { status: "passed", annotations: [{ type: "env-signal:http-5xx" }], errors: [] },
@@ -57,6 +57,22 @@ describe("health aggregation", () => {
     const summary = aggregateHealth(suite, compileCategories());
     expect(summary.recoveredWithSignals).toBe(1);
     expect(summary.passedWithSignals).toBe(0);
+  });
+
+  it("does not count a flaky retry as recovered when the final attempt was skipped", () => {
+    const suite = { allTests: () => [{
+      id: "serial-skip", titlePath: () => ["serial-skip"], outcome: () => "flaky", expectedStatus: "passed",
+      results: [
+        { status: "passed", annotations: [], errors: [] },
+        { status: "failed", annotations: [{ type: "env-signal:http-5xx" }], errors: [] },
+        { status: "skipped", annotations: [], errors: [] },
+      ],
+    }] } as unknown as Suite;
+    const summary = aggregateHealth(suite, compileCategories());
+    expect(summary.outcomes.flaky).toBe(1);
+    expect(summary.recoveredWithSignals).toBe(0);
+    expect(summary.previousAttemptsWithSignals).toBe(1);
+    expect(summary.unavailable).toBe(1);
   });
 
   it("keeps conflicting categories mixed and unsupported annotations inconclusive", () => {

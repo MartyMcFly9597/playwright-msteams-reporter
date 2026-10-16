@@ -60,7 +60,7 @@ function sanitizeUrl(value: string): string {
 function endsEscapedJsonValue(value: string, quoteIndex: number): boolean {
   const following = value.slice(quoteIndex + 1).trimStart();
   return /^,\s*(?:\\)?["'][^"'\r\n]+(?:\\)?["']\s*:/.test(following) ||
-    /^(?:\\)?[}\]](?:\\)?["']?(?:\s*(?:[,;)]|$))/.test(following);
+    /^(?:\\)?[}\]](?:\\)?["']\s*(?:[,;)]|$)/.test(following);
 }
 
 function isSecretValueEnd(value: string, index: number, quote: string, escapedOpeningQuote: boolean): boolean {
@@ -105,8 +105,8 @@ function redactSensitiveFields(value: string): string {
 }
 
 function builtinSanitize(value: string, webhookUrl?: string): string {
-  return redactSensitiveFields(redactWebhookUrl(value, webhookUrl))
-    .replace(/\u001b\[[0-9;]*m/g, "")
+  const normalized = value.replace(/\u001b\[[0-9;]*m/g, "");
+  return redactSensitiveFields(redactWebhookUrl(normalized, webhookUrl))
     .replace(/\bAuthorization\s*:\s*[^\r\n]+/gi, "Authorization: <redacted>")
     .replace(/\bBearer\s+[^\s,;}"'\\]+/gi, "Bearer <redacted>")
     .replace(/\b(?:Basic|Digest|NTLM|Negotiate|ApiKey|Token)\s+[^\s,;}"'\\]+/gi, "<redacted-authorization>")
@@ -244,7 +244,7 @@ export function buildHealthMessage(summary: HealthSummary, options: HealthDispla
   const errors = context.errors.map(error => [textEntry(`Runner error: ${context.errorsSanitized ? error : clean(error)}`)]);
   const errorOmission = context.errorsOmitted ? [[textEntry(`${context.errorsOmitted} additional runner errors omitted.`)]] : [];
   const detailGroups = [...errorOmission, ...errors, ...failureDetails(summary, options, clean)];
-  const actions = addResultsAction(options, webhookUrl, clean);
+  let actions = addResultsAction(options, webhookUrl, clean);
   const serialize = (entries: TextEntry[]) => JSON.stringify({
     type: "message",
     attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", contentUrl: null,
@@ -253,7 +253,9 @@ export function buildHealthMessage(summary: HealthSummary, options: HealthDispla
   const budget = options.maxPayloadBytes ?? 26000;
   let omitted = Math.max(0, summary.failures.length - (options.maxTests ?? 5));
   const omission = (count: number) => textEntry(`${count} additional detail groups omitted; aggregate counts are unchanged.`);
-  if (Buffer.byteLength(serialize([...body, omission(detailGroups.length + omitted)]), "utf8") > budget) {
+  const minimumMessage = () => serialize([...body, omission(detailGroups.length + omitted)]);
+  if (Buffer.byteLength(minimumMessage(), "utf8") > budget && actions.length) actions = [];
+  if (Buffer.byteLength(minimumMessage(), "utf8") > budget) {
     throw new Error("Health payload budget is too small for summary and results link");
   }
   const selected = [...body];

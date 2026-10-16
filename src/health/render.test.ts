@@ -27,6 +27,11 @@ describe("health card rendering", () => {
       .not.toContain("correct horse battery");
   });
 
+  it("redacts credentials even when ANSI styling splits the key or value", () => {
+    expect(sanitizeHealthText('password:\u001b[32m"alpha beta"\u001b[39m')).not.toContain("alpha beta");
+    expect(sanitizeHealthText('pass\u001b[32mword: "alpha beta"')).not.toContain("alpha beta");
+  });
+
   it("redacts credentials from non-HTTP schemes and webhook paths but preserves ordinary text", () => {
     const sanitized = sanitizeHealthText([
       "amqp://user:synthetic-secret@broker.acme.example:5672",
@@ -87,6 +92,29 @@ describe("health card rendering", () => {
     expect(sanitizeHealthText(nested)).not.toContain("part2");
     expect(sanitizeHealthText(nested)).not.toContain("secret2");
     expect(sanitizeHealthText(nested)).toContain("visible");
+    const reviewRepro = JSON.stringify(JSON.stringify({ password: 'part1"},part2', other: "visible" }));
+    expect(sanitizeHealthText(reviewRepro)).not.toContain("part2");
+    expect(sanitizeHealthText(reviewRepro)).toContain("visible");
+  });
+
+  it("drops the optional results action before rejecting a minimum-budget summary", () => {
+    const summary = {
+      outcomes: { expected: 1, unexpected: 0, flaky: 1, skipped: 0 },
+      assessments: { environment: 0, regression: 0, mixed: 0, undetermined: 0 },
+      categories: [], noise: [], failures: [], unavailable: 1,
+      passedWithSignals: 1, recoveredWithSignals: 1, previousAttemptsWithSignals: 1,
+    } as ReturnType<typeof aggregateHealth>;
+    const message = buildHealthMessage(summary, {
+      title: "😀".repeat(500),
+      maxPayloadBytes: 4096,
+      linkToResultsUrl: `https://a.co/${"x".repeat(1987)}`,
+      linkToResultsText: "😀".repeat(100),
+    }, { status: "passed", duration: 0, errors: [] });
+    const card = JSON.parse(message).attachments[0].content;
+    expect(Buffer.byteLength(message, "utf8")).toBeLessThanOrEqual(4096);
+    expect(card.actions).toEqual([]);
+    expect(card.body.some((entry: { text: string }) => entry.text.includes("Final signal evidence unavailable"))).toBe(true);
+    expect(card.body.some((entry: { text: string }) => entry.text.includes("Recovered flaky tests"))).toBe(true);
   });
 
   it("enforces the envelope byte limit when runner errors fill the detail section", () => {
