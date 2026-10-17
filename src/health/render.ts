@@ -80,18 +80,18 @@ function findQuotedSecretEnd(value: string, start: number, quote: string, escape
 
 function findArraySecretEnd(value: string, start: number): number {
   let depth = 0;
-  let quoted = false;
+  let quote: string | undefined;
   let escaped = false;
   let index = start;
   for (; index < value.length; index += 1) {
     const character = value[index];
-    if (quoted) {
+    if (quote) {
       if (escaped) escaped = false;
       else if (character === "\\") escaped = true;
-      else if (character === '"') quoted = false;
+      else if (character === quote) quote = undefined;
       continue;
     }
-    if (character === '"') quoted = true;
+    if (character === '"' || character === "'") quote = character;
     else if (character === "[") depth += 1;
     else if (character === "]" && --depth === 0) return index + 1;
   }
@@ -232,8 +232,9 @@ function failureDetail(failure: HealthSummary["failures"][number], options: Heal
     } catch { /* Fall back to the Playwright title path. */ }
   }
   const entries = [textEntry(clean(label), true)];
-  const error = failure.result?.errors?.[0]?.message;
-  if (error) entries.push(textEntry(clean(error, 2000)));
+  const error = failure.result?.errors?.[0];
+  const diagnostic = error?.message ?? error?.value;
+  if (diagnostic) entries.push(textEntry(clean(diagnostic, 2000)));
   return entries;
 }
 

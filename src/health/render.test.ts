@@ -64,6 +64,12 @@ describe("health card rendering", () => {
     const multilineCookies = sanitizeHealthText(JSON.stringify({ "set-cookie": ["session=private", "auth=private"] }, null, 2));
     expect(multilineCookies).not.toContain("session=private");
     expect(multilineCookies).not.toContain("auth=private");
+    const singleQuotedCookies = sanitizeHealthText(String.raw`{ 'set-cookie': [ 'session=first]PRIVATE', 'session=SECOND_SECRET' ] }`);
+    expect(singleQuotedCookies).not.toContain("PRIVATE");
+    expect(singleQuotedCookies).not.toContain("SECOND_SECRET");
+    const escapedSingleQuote = sanitizeHealthText(String.raw`{ 'set-cookie': [ 'session=first\']PRIVATE', 'session=SECOND_SECRET' ] }`);
+    expect(escapedSingleQuote).not.toContain("PRIVATE");
+    expect(escapedSingleQuote).not.toContain("SECOND_SECRET");
     expect(sanitizeHealthText("Response: 500; file.csv: value")).toContain("Response: 500; file.csv: value");
   });
 
@@ -230,6 +236,16 @@ describe("health card rendering", () => {
     expect(errorEntry.fontType).toBeUndefined();
     expect(summary.assessments.undetermined).toBe(1);
     expect(JSON.stringify(card)).toContain("Cause undetermined");
+  });
+
+  it("renders Playwright value-only thrown errors", () => {
+    const suite = { allTests: () => [{
+      id: "value-error", titlePath: () => ["value-error"], outcome: () => "unexpected",
+      results: [{ status: "failed", annotations: [], errors: [{ value: "backend unavailable" }] }],
+    }] } as unknown as Suite;
+    const summary = aggregateHealth(suite, compileCategories());
+    const message = buildHealthMessage(summary, {}, { status: "failed", duration: 0, errors: [] });
+    expect(message).toContain("backend unavailable");
   });
 
   it("enforces full-envelope UTF-8 limits and deterministically reports omitted details", () => {

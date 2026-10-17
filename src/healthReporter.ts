@@ -83,7 +83,7 @@ export default class HealthReporter implements Reporter {
 
   onError(error: TestError): void {
     if (this.runnerErrors.length < 20) {
-      this.runnerErrors.push(sanitizeHealthText(error.message ?? "Runner error", 300, this.options.webhookUrl, this.options.sanitizeText));
+      this.runnerErrors.push(sanitizeHealthText(error.message ?? error.value ?? "Runner error", 300, this.options.webhookUrl, this.options.sanitizeText));
     } else {
       this.runnerErrorsOmitted += 1;
     }

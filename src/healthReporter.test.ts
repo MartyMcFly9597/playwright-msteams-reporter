@@ -93,6 +93,15 @@ describe("optional health reporter", () => {
     expect(body.attachments[0].content.body.some((entry: { text?: string }) => entry.text?.includes("global setup failed"))).toBe(true);
   });
 
+  it("includes value-only Playwright runner errors in the health card", async () => {
+    const reporter = new HealthReporter({ webhookUrl, quiet: true });
+    reporter.onBegin({} as FullConfig, { allTests: () => [] } as unknown as Suite);
+    reporter.onError({ value: "backend unavailable" });
+    await reporter.onEnd({ ...result, status: "failed" });
+    const body = String(jest.mocked(global.fetch).mock.calls[0][1]?.body);
+    expect(body).toContain("backend unavailable");
+  });
+
   it("sanitizes and bounds runner errors when they are received", () => {
     const reporter = new HealthReporter({
       webhookUrl,
