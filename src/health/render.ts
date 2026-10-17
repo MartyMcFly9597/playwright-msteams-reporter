@@ -83,7 +83,7 @@ function findArraySecretEnd(value: string, start: number): number {
   let quoted = false;
   let escaped = false;
   let index = start;
-  for (; index < value.length && value[index] !== "\n"; index += 1) {
+  for (; index < value.length; index += 1) {
     const character = value[index];
     if (quoted) {
       if (escaped) escaped = false;
@@ -198,9 +198,9 @@ function textEntry(text: string, bold = false): TextEntry {
 }
 
 function addResultsAction(options: HealthDisplayOptions, webhookUrl: string | undefined, clean: (value: string, limit?: number, escapeMarkdownText?: boolean) => string) {
+  const value = typeof options.linkToResultsUrl === "function" ? options.linkToResultsUrl() : options.linkToResultsUrl;
+  if (typeof value !== "string" || !value || value.length > 2000) return [];
   try {
-    const value = typeof options.linkToResultsUrl === "function" ? options.linkToResultsUrl() : options.linkToResultsUrl;
-    if (typeof value !== "string" || !value || value.length > 2000) return [];
     const url = new URL(value);
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password ||
       redactWebhookUrl(value, webhookUrl) !== value || redactWebhookUrl(url.href, webhookUrl) !== url.href) return [];

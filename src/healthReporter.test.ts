@@ -144,6 +144,20 @@ describe("optional health reporter", () => {
     expect(JSON.parse(jest.mocked(global.fetch).mock.calls[0][1]?.body as string).attachments[0].content.actions).toEqual([]);
   });
 
+  it("reports throwing results-link callbacks instead of silently omitting the action", async () => {
+    const reporter = new HealthReporter({
+      webhookUrl,
+      quiet: true,
+      linkToResultsUrl: () => { throw new Error(`results callback failed ${webhookUrl}`); },
+    });
+    reporter.onBegin({} as FullConfig, suite("unexpected"));
+    await expect(reporter.onEnd({ ...result, status: "failed" })).resolves.toBeUndefined();
+    expect(global.fetch).not.toHaveBeenCalled();
+    const diagnostic = jest.mocked(console.error).mock.calls.flat().join(" ");
+    expect(diagnostic).toContain("results callback failed");
+    expect(diagnostic).not.toContain("sig=secret");
+  });
+
   it.each([
     { annotationPrefix: "" }, { maxTests: -1 }, { maxTests: 1.5 }, { maxPayloadBytes: 4095 },
     { maxPayloadBytes: 26001 }, { resultsLinkPolicy: "unknown" }, { webhookType: "unknown" },

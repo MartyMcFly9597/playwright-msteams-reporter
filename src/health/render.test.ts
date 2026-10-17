@@ -61,6 +61,9 @@ describe("health card rendering", () => {
     const cookieArray = sanitizeHealthText(String.raw`{"set-cookie":["first-session","second-session"],"other":"visible"}`);
     expect(cookieArray).not.toContain("second-session");
     expect(cookieArray).toContain("visible");
+    const multilineCookies = sanitizeHealthText(JSON.stringify({ "set-cookie": ["session=private", "auth=private"] }, null, 2));
+    expect(multilineCookies).not.toContain("session=private");
+    expect(multilineCookies).not.toContain("auth=private");
     expect(sanitizeHealthText("Response: 500; file.csv: value")).toContain("Response: 500; file.csv: value");
   });
 
