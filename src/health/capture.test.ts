@@ -32,9 +32,24 @@ function createTestInfo(): TestInfo {
   } as unknown as TestInfo;
 }
 
-function emitResponse(context: FakeContext, address: string, status: number): void {
-  const request = { url: () => address, method: () => "GET", resourceType: () => "fetch" };
+function emitResponse(context: FakeContext, address: string, status: number, page?: FakePage): void {
+  const frame = { page: () => page };
+  const request = {
+    url: () => address,
+    method: () => "GET",
+    resourceType: () => "fetch",
+    frame: () => frame,
+  };
   context.emit("response", { url: () => address, status: () => status, request: () => request });
+}
+
+function emitNavigationRequest(context: FakeContext, address: string, sourcePage: FakePage): void {
+  const frame = { parentFrame: () => null, page: () => sourcePage };
+  context.emit("request", {
+    url: () => address,
+    isNavigationRequest: () => true,
+    frame: () => frame,
+  });
 }
 
 function emitRequestFailure(context: FakeContext, address: string, errorText: string): void {
@@ -92,6 +107,44 @@ describe("environment signal browser capture lifecycle", () => {
     expect(testInfo.annotations.map(annotation => annotation.type)).toEqual(["env-signal:http-5xx"]);
   });
 
+  it("discovers the first main-frame host after starting on about:blank", () => {
+    const page = new FakePage("about:blank");
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+    });
+
+    emitNavigationRequest(context, "https://absolute.acme.example/start", page);
+    emitResponse(context, "https://absolute.acme.example/api", 503);
+    capture.dispose();
+
+    expect(testInfo.annotations.map(annotation => annotation.type)).toEqual(["env-signal:http-5xx"]);
+  });
+
+  it("discovers only the supplied page host when another context page navigates first", () => {
+    const page = new FakePage("about:blank");
+    const otherPage = new FakePage("about:blank");
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+    });
+
+    context.emit("page", otherPage);
+    emitNavigationRequest(context, "https://other.acme.example/start", otherPage);
+    emitResponse(context, "https://other.acme.example/api", 401);
+    emitNavigationRequest(context, "https://app.acme.example/start", page);
+    emitResponse(context, "https://app.acme.example/api", 503);
+    capture.dispose();
+
+    expect(testInfo.annotations.map(annotation => annotation.type)).toEqual(["env-signal:http-5xx"]);
+  });
+
   it("captures console errors and makes disposal idempotent", () => {
     const page = new FakePage();
     const context = new FakeContext([page]);
@@ -111,6 +164,459 @@ describe("environment signal browser capture lifecycle", () => {
     expect(testInfo.annotations[0].type).toBe("env-signal:console-error");
     expect(page.listenerCount("console")).toBe(0);
     expect(context.listenerCount("page")).toBe(0);
+  });
+
+  it("releases closed-page listeners and references before fixture teardown", () => {
+    const page = new FakePage();
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+    });
+
+    page.emit("close");
+
+    expect(page.listenerCount("pageerror")).toBe(0);
+    expect(page.listenerCount("console")).toBe(0);
+    expect(page.listenerCount("close")).toBe(0);
+    capture.dispose();
+    expect(testInfo.annotations).toEqual([]);
+  });
+
+  it("releases listeners as repeatedly opened popup pages close", () => {
+    const page = new FakePage();
+    const context = new FakeContext([page]);
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo: createTestInfo(),
+    });
+    const popups = Array.from({ length: 30 }, () => new FakePage());
+
+    for (const popup of popups) {
+      context.emit("page", popup);
+      popup.emit("close");
+      expect(popup.listenerCount("pageerror")).toBe(0);
+      expect(popup.listenerCount("console")).toBe(0);
+    }
+
+    capture.dispose();
+    expect(context.listenerCount("page")).toBe(0);
+    expect(popups.every(popup => popup.listenerCount("close") === 0)).toBe(true);
+  });
+
+  it("correlates ignored HTTP responses with browser resource console errors only", () => {
+    const page = new FakePage();
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+      options: { includeHosts: ["app.acme.example", "api.acme.example"] },
+    });
+    const resourceUrl = "https://api.acme.example/private";
+    emitResponse(context, resourceUrl, 401, page);
+    emitResponse(context, resourceUrl, 401, page);
+    for (let index = 0; index < 2; index += 1) {
+      page.emit("console", {
+        type: () => "error",
+        text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+        location: () => ({ url: resourceUrl }),
+      });
+    }
+    page.emit("console", {
+      type: () => "error",
+      text: () => "Application rejected authorization",
+      location: () => ({ url: resourceUrl }),
+    });
+    capture.dispose();
+
+    expect(testInfo.annotations.map(annotation => annotation.type)).toEqual(["env-signal:console-error"]);
+    expect(testInfo.annotations[0].description).toContain("Application rejected authorization");
+  });
+
+  it("does not suppress a different status console error for the same URL", () => {
+    const page = new FakePage();
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+      options: { includeHosts: ["app.acme.example"] },
+    });
+    const resourceUrl = "https://app.acme.example/private";
+    emitResponse(context, resourceUrl, 401, page);
+    emitResponse(context, resourceUrl, 404, page);
+    page.emit("console", {
+      type: () => "error",
+      text: () => "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      location: () => ({ url: resourceUrl }),
+    });
+    page.emit("console", {
+      type: () => "error",
+      text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      location: () => ({ url: resourceUrl }),
+    });
+    capture.dispose();
+
+    expect(testInfo.annotations.map(annotation => annotation.type)).toEqual(["env-signal:console-error"]);
+    expect(testInfo.annotations[0].description).toContain("404");
+  });
+
+  it("correlates an ignored response when its console event arrives first", () => {
+    const page = new FakePage();
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+      options: { includeHosts: ["app.acme.example"] },
+    });
+    const resourceUrl = "https://app.acme.example/private";
+
+    page.emit("console", {
+      type: () => "error",
+      text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      location: () => ({ url: resourceUrl }),
+    });
+    emitResponse(context, resourceUrl, 401, page);
+    capture.dispose();
+
+    expect(testInfo.annotations).toEqual([]);
+  });
+
+  it("correlates a popup response before the popup page event", () => {
+    const page = new FakePage();
+    const popup = new FakePage("about:blank");
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+      options: { includeHosts: ["app.acme.example"] },
+    });
+    const resourceUrl = "https://app.acme.example/private";
+
+    emitResponse(context, resourceUrl, 401, popup);
+    context.emit("page", popup);
+    popup.emit("console", {
+      type: () => "error",
+      text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      location: () => ({ url: resourceUrl }),
+    });
+    capture.dispose();
+
+    expect(testInfo.annotations).toEqual([]);
+  });
+
+  it("retries popup response ownership when the request frame is initially unavailable", () => {
+    const page = new FakePage();
+    const popup = new FakePage("about:blank");
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+      options: { includeHosts: ["app.acme.example"] },
+    });
+    const address = "https://app.acme.example/private";
+    const request = {
+      url: () => address,
+      method: () => "GET",
+      resourceType: () => "fetch",
+      frame: jest.fn()
+        .mockImplementationOnce(() => { throw new Error("Frame is not attached yet"); })
+        .mockImplementation(() => ({ page: () => popup })),
+    };
+
+    context.emit("response", { url: () => address, status: () => 401, request: () => request });
+    context.emit("page", popup);
+    popup.emit("console", {
+      type: () => "error",
+      text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      location: () => ({ url: address }),
+    });
+    capture.dispose();
+
+    expect(request.frame).toHaveBeenCalledTimes(2);
+    expect(testInfo.annotations).toEqual([]);
+  });
+
+  it("does not pair expired popup tokens during teardown ownership retry", () => {
+    const now = jest.spyOn(Date, "now").mockReturnValue(0);
+    const page = new FakePage();
+    const popup = new FakePage("about:blank");
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+      options: { includeHosts: ["app.acme.example"] },
+    });
+    const address = "https://app.acme.example/private";
+    const request = {
+      url: () => address,
+      method: () => "GET",
+      resourceType: () => "fetch",
+      frame: jest.fn()
+        .mockImplementationOnce(() => { throw new Error("Frame is not attached yet"); })
+        .mockImplementation(() => ({ page: () => popup })),
+    };
+
+    context.emit("page", popup);
+    popup.emit("console", {
+      type: () => "error",
+      text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      location: () => ({ url: address }),
+    });
+    context.emit("response", { url: () => address, status: () => 401, request: () => request });
+    now.mockReturnValue(6000);
+    capture.dispose();
+    now.mockRestore();
+
+    expect(testInfo.annotations.map(annotation => annotation.type)).toEqual(["env-signal:console-error"]);
+  });
+
+  it("preserves response arrival order when popup ownership is rebound", () => {
+    const now = jest.spyOn(Date, "now").mockReturnValue(0);
+    const page = new FakePage();
+    const popup = new FakePage("about:blank");
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+      options: { includeHosts: ["app.acme.example"] },
+    });
+    const address = "https://app.acme.example/private";
+    const firstRequest = {
+      url: () => address,
+      method: () => "GET",
+      resourceType: () => "fetch",
+      frame: jest.fn()
+        .mockImplementationOnce(() => { throw new Error("Frame is not attached yet"); })
+        .mockImplementation(() => ({ page: () => popup })),
+    };
+    const secondRequest = {
+      url: () => address,
+      method: () => "GET",
+      resourceType: () => "fetch",
+      frame: () => ({ page: () => popup }),
+    };
+
+    context.emit("response", { url: () => address, status: () => 401, request: () => firstRequest });
+    now.mockReturnValue(1000);
+    context.emit("response", { url: () => address, status: () => 401, request: () => secondRequest });
+    now.mockReturnValue(2000);
+    context.emit("page", popup);
+    now.mockReturnValue(3000);
+    popup.emit("console", {
+      type: () => "error",
+      text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      location: () => ({ url: address }),
+    });
+    now.mockReturnValue(5500);
+    popup.emit("console", {
+      type: () => "error",
+      text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      location: () => ({ url: address }),
+    });
+    capture.dispose();
+    now.mockRestore();
+
+    expect(testInfo.annotations).toEqual([]);
+  });
+
+  it("retains an unmatched browser resource console diagnostic at teardown", () => {
+    const page = new FakePage();
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+      options: { includeHosts: ["app.acme.example"] },
+    });
+
+    page.emit("console", {
+      type: () => "error",
+      text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      location: () => ({ url: "https://app.acme.example/private" }),
+    });
+    capture.dispose();
+
+    expect(testInfo.annotations.map(annotation => annotation.type)).toEqual(["env-signal:console-error"]);
+  });
+
+  it("filters deferred browser diagnostics and applies custom classifiers on flush", () => {
+    const page = new FakePage();
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+      options: {
+        includeHosts: ["app.acme.example"],
+        excludeUrls: ["https://app.acme.example/health"],
+        maxDescriptionLength: 40,
+        classifiers: [event => event.text?.includes("Unauthorized")
+          ? { kind: "auth-resource-warning", description: "classified resource warning" }
+          : undefined],
+      },
+    });
+
+    page.emit("console", {
+      type: () => "error",
+      text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      location: () => ({ url: "https://app.acme.example/health/check" }),
+    });
+    page.emit("console", {
+      type: () => "error",
+      text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      location: () => ({ url: "https://app.acme.example/private" }),
+    });
+    capture.dispose();
+
+    expect(testInfo.annotations.map(annotation => annotation.type)).toEqual(["env-signal:auth-resource-warning"]);
+    expect(testInfo.annotations[0].description).toBe("classified resource warning");
+  });
+
+  it("does not invoke consumer callbacks for excluded deferred diagnostics", () => {
+    const page = new FakePage();
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const classifier = jest.fn(() => ({ kind: "excluded-kind", description: "excluded detail" }));
+    const sanitizer = jest.fn((text: string) => text);
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+      options: {
+        includeHosts: ["app.acme.example"],
+        excludeUrls: ["https://app.acme.example/health"],
+        classifiers: [classifier],
+        sanitizeText: sanitizer,
+      },
+    });
+
+    page.emit("console", {
+      type: () => "error",
+      text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      location: () => ({ url: "https://app.acme.example/health/check" }),
+    });
+    capture.dispose();
+
+    expect(classifier).not.toHaveBeenCalled();
+    expect(sanitizer).not.toHaveBeenCalled();
+    expect(testInfo.annotations).toEqual([]);
+  });
+
+  it("sanitizes and bounds deferred browser console text before retaining it", () => {
+    const page = new FakePage();
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+      options: { includeHosts: ["app.acme.example"], maxDescriptionLength: 40 },
+    });
+
+    page.emit("console", {
+      type: () => "error",
+      text: () => `Failed to load resource: the server responded with a status of 401 (Unauthorized) Bearer ${"synthetic-secret ".repeat(1000)}`,
+      location: () => ({ url: "https://app.acme.example/private" }),
+    });
+    capture.dispose();
+
+    expect(testInfo.annotations[0].description).not.toContain("synthetic-secret");
+    expect(testInfo.annotations[0].description?.length).toBeLessThanOrEqual(40);
+  });
+
+  it("treats connection-aborted failures as network evidence but ignores explicit request cancellation", () => {
+    const page = new FakePage();
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+      options: { includeHosts: ["app.acme.example"] },
+    });
+
+    emitRequestFailure(context, "https://app.acme.example/navigation", "net::ERR_ABORTED");
+    emitRequestFailure(context, "https://app.acme.example/service", "net::ERR_CONNECTION_ABORTED");
+    emitRequestFailure(context, "https://app.acme.example/popup", "Provisional navigation canceled.");
+    emitRequestFailure(context, "https://app.acme.example/request-canceled", "Request was canceled.");
+    emitRequestFailure(context, "https://app.acme.example/request-cancelled", "Request was cancelled.");
+    capture.dispose();
+
+    expect(testInfo.annotations.map(annotation => annotation.type)).toEqual(["env-signal:net-fail"]);
+    expect(testInfo.annotations[0].description).toContain("ERR_CONNECTION_ABORTED");
+  });
+
+  it("does not revive an expired ignored response token", () => {
+    const now = jest.spyOn(Date, "now");
+    const page = new FakePage();
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+      options: { includeHosts: ["app.acme.example"] },
+    });
+    const resourceUrl = "https://app.acme.example/private";
+
+    now.mockReturnValue(0);
+    emitResponse(context, resourceUrl, 401, page);
+    now.mockReturnValue(6000);
+    emitResponse(context, resourceUrl, 401, page);
+    for (let index = 0; index < 2; index += 1) {
+      page.emit("console", {
+        type: () => "error",
+        text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+        location: () => ({ url: resourceUrl }),
+      });
+    }
+    capture.dispose();
+    now.mockRestore();
+
+    expect(testInfo.annotations.map(annotation => annotation.type)).toEqual(["env-signal:console-error"]);
+  });
+
+  it("bounds ignored-response correlation entries across unique URLs", () => {
+    const page = new FakePage();
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+      options: { includeHosts: ["app.acme.example"], maxEvents: 2 },
+    });
+    const addresses = Array.from({ length: 9 }, (_, index) => `https://app.acme.example/private/${index}`);
+    for (const address of addresses) emitResponse(context, address, 401, page);
+    for (const address of [addresses[0], addresses[4]]) {
+      page.emit("console", {
+        type: () => "error",
+        text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+        location: () => ({ url: address }),
+      });
+    }
+    capture.dispose();
+
+    expect(testInfo.annotations.map(annotation => annotation.type)).toEqual(["env-signal:console-error"]);
   });
 
   it("sanitizes descriptions before retaining annotations", () => {

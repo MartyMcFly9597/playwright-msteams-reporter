@@ -1,25 +1,24 @@
 import { expect, test as base } from "@playwright/test";
-import { captureEnvSignals, type EnvSignalCapture } from "../dist/healthCapture";
+import { captureEnvSignals } from "../dist/healthCapture";
 
 const existingTest = base.extend<{ existingFixture: string }>({
   existingFixture: async ({}, use) => use("preserved"),
 });
 
-const test = existingTest.extend<{ capture: EnvSignalCapture }>({
-  capture: async ({ page, context }, use, testInfo) => {
+const test = existingTest.extend<{ environmentEvidence: void }>({
+  environmentEvidence: async ({ page, context }, use, testInfo) => {
     const capture = captureEnvSignals({ page, context, testInfo, options: { retainOnPass: true } });
     try {
-      await use(capture);
+      capture.record({ kind: "fixture-composed", description: "synthetic fixture evidence" });
+      await use(undefined);
     } finally {
       capture.dispose();
-      if (testInfo.status === "passed") {
-        expect(testInfo.annotations.some(annotation => annotation.type === "env-signal:fixture-composed")).toBe(true);
-      }
     }
+    expect(testInfo.annotations.some(annotation => annotation.type === "env-signal:fixture-composed")).toBe(true);
   },
 });
 
-test("capture composes with an existing TypeScript fixture", async ({ existingFixture, capture }) => {
+test("capture composes with an existing TypeScript fixture", async ({ existingFixture, environmentEvidence }) => {
   expect(existingFixture).toBe("preserved");
-  capture.record({ kind: "fixture-composed", description: "synthetic fixture evidence" });
+  expect(environmentEvidence).toBeUndefined();
 });

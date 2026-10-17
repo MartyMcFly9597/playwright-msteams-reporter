@@ -6,20 +6,19 @@ const existingTest = base.extend({
 });
 
 const test = existingTest.extend({
-  capture: async ({ page, context }, use, testInfo) => {
+  environmentEvidence: async ({ page, context }, use, testInfo) => {
     const capture = captureEnvSignals({ page, context, testInfo, options: { retainOnPass: true } });
     try {
-      await use(capture);
+      capture.record({ kind: "fixture-composed", description: "synthetic fixture evidence" });
+      await use(undefined);
     } finally {
       capture.dispose();
-      if (testInfo.status === "passed") {
-        expect(testInfo.annotations.some(annotation => annotation.type === "env-signal:fixture-composed")).toBe(true);
-      }
     }
+    expect(testInfo.annotations.some(annotation => annotation.type === "env-signal:fixture-composed")).toBe(true);
   },
 });
 
-test("capture composes with an existing CommonJS fixture", async ({ existingFixture, capture }) => {
+test("capture composes with an existing CommonJS fixture", async ({ existingFixture, environmentEvidence }) => {
   expect(existingFixture).toBe("preserved");
-  capture.record({ kind: "fixture-composed", description: "synthetic fixture evidence" });
+  expect(environmentEvidence).toBeUndefined();
 });

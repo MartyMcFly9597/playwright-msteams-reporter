@@ -205,6 +205,17 @@ export const test = base.extend<Fixtures>({
 });
 ```
 
+Tests must import this extended `test` and request the lazy fixture:
+
+```typescript
+import { expect } from "@playwright/test";
+import { test } from "./fixtures";
+
+test("records environment evidence", async ({ environmentEvidence }) => {
+  expect(environmentEvidence).toBeUndefined();
+});
+```
+
 JavaScript and BDD-style fixture modules can compose the same helper using
 CommonJS without replacing their existing fixture exports:
 
@@ -224,15 +235,29 @@ exports.test = base.extend({
 });
 ```
 
+Request the fixture from the exported `test` to start capture for that test:
+
+```javascript
+const { expect } = require("@playwright/test");
+const { test } = require("./fixtures");
+
+test("records environment evidence", async ({ environmentEvidence }) => {
+  expect(environmentEvidence).toBeUndefined();
+});
+```
+
 By default, capture is limited to the starting page's host, or the project's
-`baseURL` when the page is still `about:blank`. Configure `includeHosts` for
-additional exact hostnames. `excludeHosts` excludes exact hostnames and
+`baseURL` when the page is still `about:blank`. If neither is available, the
+helper discovers the host from the first main-frame navigation. Configure
+`includeHosts` for additional exact hostnames. `excludeHosts` excludes exact hostnames and
 `excludeUrls` excludes a URL path and its descendants. Defaults ignore HTTP
 401/403 responses, unrelated hosts, and abort/cancel request failures. HTTP
 5xx, remaining request failures, page errors, and console errors become generic
 signals. An optional `classifiers` list can add application-owned kinds, such
 as a visible service-busy message; no application-specific classifiers or host
-rules are built in.
+rules are built in. Browser-generated resource-load console errors correlated
+with ignored 401/403 responses are suppressed; application console errors remain
+eligible evidence.
 
 Each capture instance has independent filters, classifiers, sanitization, and
 retention limits. Descriptions are sanitized before being retained or appended
@@ -250,9 +275,9 @@ Capture options:
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `annotationPrefix` | `env-signal:` | Safe annotation prefix; coordinate it with the health reporter's `annotationPrefix`. |
-| `includeHosts` | Starting page host or project `baseURL` host | Exact hostnames to observe; configure additional app/API hosts per consumer. |
+| `includeHosts` | Starting page host, project `baseURL` host, or first main-frame navigation host | Exact hostnames to observe; configure additional app/API hosts per consumer. |
 | `excludeHosts` / `excludeUrls` | `[]` | Exact host exclusions and URL path-prefix exclusions. |
-| `ignoredHttpStatuses` | `[401, 403]` | Response statuses ignored before custom classification. |
+| `ignoredHttpStatuses` | `[401, 403]` | Response statuses ignored before custom classification; matching browser-generated resource-load console errors are also suppressed. |
 | `classifiers` | `[]` | Ordered event classifiers; return `{ kind, description? }` or `undefined`. Returning `undefined` allows generic rules to run. |
 | `sanitizeText` | Built-in sanitizer | Consumer sanitizer applied after built-in masking to retained descriptions. A thrown or non-string result omits the detail. |
 | `maxEvents` / `maxEventsPerKind` | `20` / `5` | Total and per-kind retained signal caps; each must be an integer from `1` to `200`. |
@@ -273,8 +298,10 @@ capture.record({
 
 Built-in masking covers common bearer/JWT and signed-URL forms, but cannot
 identify arbitrary application secrets or personal data. Provide `sanitizeText`
-for domain-specific values, keep classifiers local and side-effect free, and do
-not place raw traces, private URLs, or unbounded logger output in annotations.
+for domain-specific values and keep classifier and sanitizer callbacks pure and
+side-effect free: a candidate browser diagnostic may be classified and
+sanitized before a matching response suppresses it. Do not place raw traces,
+private URLs, or unbounded logger output in annotations.
 The helper creates no attachments and writes no output itself.
 
 Health reporter options:
