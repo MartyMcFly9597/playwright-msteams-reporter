@@ -25,11 +25,13 @@ describe("health card rendering", () => {
       .not.toContain("synthetic-token");
     expect(sanitizeHealthText('Received: "{\\"password\\":\\"correct horse battery\\"}"'))
       .not.toContain("correct horse battery");
+    expect(sanitizeHealthText('Digest username="alice", realm="example", response="digest-secret"')).not.toContain("digest-secret");
   });
 
   it("redacts credentials even when ANSI styling splits the key or value", () => {
     expect(sanitizeHealthText('password:\u001b[32m"alpha beta"\u001b[39m')).not.toContain("alpha beta");
     expect(sanitizeHealthText('pass\u001b[32mword: "alpha beta"')).not.toContain("alpha beta");
+    expect(sanitizeHealthText("password: `alpha beta`")).not.toContain("alpha beta");
   });
 
   it("redacts credentials from non-HTTP schemes and webhook paths but preserves ordinary text", () => {
@@ -70,6 +72,9 @@ describe("health card rendering", () => {
     const escapedSingleQuote = sanitizeHealthText(String.raw`{ 'set-cookie': [ 'session=first\']PRIVATE', 'session=SECOND_SECRET' ] }`);
     expect(escapedSingleQuote).not.toContain("PRIVATE");
     expect(escapedSingleQuote).not.toContain("SECOND_SECRET");
+    const backtickCookies = sanitizeHealthText("{ 'set-cookie': [ `session=first]PRIVATE`, `session=SECOND_SECRET` ] }");
+    expect(backtickCookies).not.toContain("PRIVATE");
+    expect(backtickCookies).not.toContain("SECOND_SECRET");
     expect(sanitizeHealthText("Response: 500; file.csv: value")).toContain("Response: 500; file.csv: value");
   });
 
@@ -108,6 +113,8 @@ describe("health card rendering", () => {
     const reviewRepro = JSON.stringify(JSON.stringify({ password: 'part1"},part2', other: "visible" }));
     expect(sanitizeHealthText(reviewRepro)).not.toContain("part2");
     expect(sanitizeHealthText(reviewRepro)).toContain("visible");
+    const tripleEncoded = JSON.stringify(JSON.stringify(JSON.stringify({ password: "triple-secret", other: "visible" })));
+    expect(sanitizeHealthText(tripleEncoded)).not.toContain("triple-secret");
   });
 
   it("drops the optional results action before rejecting a minimum-budget summary", () => {
@@ -115,7 +122,8 @@ describe("health card rendering", () => {
       outcomes: { expected: 1, unexpected: 0, flaky: 1, skipped: 0 },
       assessments: { environment: 0, regression: 0, mixed: 0, undetermined: 0 },
       categories: [], noise: [], failures: [], unavailable: 1,
-      passedWithSignals: 1, recoveredWithSignals: 1, previousAttemptsWithSignals: 1,
+      passedWithSignals: 1, recoveredWithSignals: 1, flakyWithFinalSignals: 0,
+      flakyFinalKinds: [], previousAttemptsWithSignals: 1,
     } as ReturnType<typeof aggregateHealth>;
     const message = buildHealthMessage(summary, {
       title: "😀".repeat(500),

@@ -75,6 +75,22 @@ describe("health aggregation", () => {
     expect(summary.unavailable).toBe(1);
   });
 
+  it("preserves final signals on flaky tests whose final attempt did not recover", () => {
+    const suite = { allTests: () => [{
+      id: "flaky-final-failure", titlePath: () => ["flaky-final-failure"], outcome: () => "flaky", expectedStatus: "passed",
+      results: [
+        { status: "passed", annotations: [], errors: [] },
+        { status: "failed", annotations: [{ type: "env-signal:http-5xx" }], errors: [] },
+      ],
+    }] } as unknown as Suite;
+    const summary = aggregateHealth(suite, compileCategories());
+    expect(summary.outcomes.flaky).toBe(1);
+    expect(summary.recoveredWithSignals).toBe(0);
+    expect(summary.flakyWithFinalSignals).toBe(1);
+    expect(summary.flakyFinalKinds).toEqual([{ kind: "http-5xx", tests: 1 }]);
+    expect(summary.assessments.environment).toBe(0);
+  });
+
   it("keeps conflicting categories mixed and unsupported annotations inconclusive", () => {
     const suite = { allTests: () => [{
       id: "mixed", titlePath: () => ["mixed"], outcome: () => "unexpected",

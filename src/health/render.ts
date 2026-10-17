@@ -36,7 +36,7 @@ const sensitiveFields = [
   "sharedaccesskey", "accountkey", "authorization", "signature", "password", "passwd", "secret",
   "cookie", "api-key", "api_key", "token", "pwd", "sig", "sv", "se", "sp", "sr", "skoid", "sktid", "skt", "ske", "sks", "skv",
 ];
-const sensitiveFieldStart = new RegExp(String.raw`(^|[^\w-])(?:\\)?(["']?)(${sensitiveFields.join("|")})(?:\\)?\2(?:\\)?\s*[:=]\s*(\\)?(["'])?`, "gi");
+const sensitiveFieldStart = new RegExp(String.raw`(^|[^\w-])((?:\\)*)(["'\x60]?)(${sensitiveFields.join("|")})((?:\\)*)\3((?:\\)*)\s*[:=]\s*((?:\\)*)(["'\x60])?`, "gi");
 const homePathPattern = /\b[A-Z]:(?:[\\/]+)Users[\\/]+[^\\/"'\r\n]+|\/(?:Users|home)\/[^/"'\r\n]+/gi;
 const markdownCharacters = new Set(["\\", "`", "*", "_", "{", "}", "[", "]", "(", ")", "#", "+", "!", "|", ">"]);
 
@@ -91,7 +91,7 @@ function findArraySecretEnd(value: string, start: number): number {
       else if (character === quote) quote = undefined;
       continue;
     }
-    if (character === '"' || character === "'") quote = character;
+    if (character === '"' || character === "'" || character === "`") quote = character;
     else if (character === "[") depth += 1;
     else if (character === "]" && --depth === 0) return index + 1;
   }
@@ -115,10 +115,10 @@ function redactSensitiveFields(value: string): string {
   sensitiveFieldStart.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = sensitiveFieldStart.exec(value)) !== null) {
-    const escapedOpeningQuote = Boolean(match[4]);
-    const quote = match[5];
-    const valueEnd = findSecretEnd(value, sensitiveFieldStart.lastIndex, quote, escapedOpeningQuote);
-    output += `${value.slice(copiedThrough, match.index)}${match[1]}${match[2]}${match[3]}${match[2]}: <redacted>`;
+    const serializedDepth = Math.max(match[2].length, match[5].length, match[6].length, match[7].length);
+    const quote = match[8];
+    const valueEnd = serializedDepth >= 3 ? value.length : findSecretEnd(value, sensitiveFieldStart.lastIndex, quote, Boolean(match[7]));
+    output += `${value.slice(copiedThrough, match.index)}${match[1]}${match[2]}${match[3]}${match[4]}${match[3]}: <redacted>`;
     copiedThrough = valueEnd;
     sensitiveFieldStart.lastIndex = valueEnd;
   }
@@ -129,6 +129,7 @@ function builtinSanitize(value: string, webhookUrl?: string): string {
   const normalized = value.replace(/\u001b\[[0-9;]*m/g, "");
   return redactSensitiveFields(redactWebhookUrl(normalized, webhookUrl))
     .replace(/\bAuthorization\s*:\s*[^\r\n]+/gi, "Authorization: <redacted>")
+    .replace(/\bDigest\s+[^\r\n]*/gi, "<redacted-authorization>")
     .replace(/\bBearer\s+[^\s,;}"'\\]+/gi, "Bearer <redacted>")
     .replace(/\b(?:Basic|Digest|NTLM|Negotiate|ApiKey|Token)\s+[^\s,;}"'\\]+/gi, "<redacted-authorization>")
     .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, "<redacted>")
@@ -247,6 +248,11 @@ function failureDetails(summary: HealthSummary, options: HealthDisplayOptions, c
   return details;
 }
 
+function flakyFinalSignalDetails(summary: HealthSummary): TextEntry[][] {
+  if (!summary.flakyWithFinalSignals) return [];
+  return summary.flakyFinalKinds.map(({ kind, tests }) => [textEntry(`${kind}: final-attempt signal on ${tests} flaky tests; recovery not established.`)]);
+}
+
 function baseEntries(summary: HealthSummary, options: HealthDisplayOptions, context: HealthRunContext, clean: (value: string, limit?: number) => string): TextEntry[] {
   const title = [options.environment, options.title ?? "Test Run Health"].filter(Boolean).join(" - ");
   const entries = [
@@ -258,6 +264,9 @@ function baseEntries(summary: HealthSummary, options: HealthDisplayOptions, cont
   if (summary.passedWithSignals || summary.recoveredWithSignals || summary.previousAttemptsWithSignals) {
     entries.push(textEntry(`Passed with signals: ${summary.passedWithSignals}. Recovered flaky tests with signal evidence: ${summary.recoveredWithSignals}. Tests with superseded-attempt signals: ${summary.previousAttemptsWithSignals}. Not included in final-failure assessments.`));
   }
+  if (summary.flakyWithFinalSignals) {
+    entries.push(textEntry(`Flaky tests with final-attempt signals: ${summary.flakyWithFinalSignals}. Recovery not established; not included in final-failure assessments.`));
+  }
   return entries;
 }
 
@@ -266,7 +275,7 @@ export function buildHealthMessage(summary: HealthSummary, options: HealthDispla
   const body = baseEntries(summary, options, context, clean);
   const errors = context.errors.map(error => [textEntry(`Runner error: ${context.errorsSanitized ? error : clean(error)}`)]);
   const errorOmission = context.errorsOmitted ? [[textEntry(`${context.errorsOmitted} additional runner errors omitted.`)]] : [];
-  const detailGroups = [...errorOmission, ...errors, ...failureDetails(summary, options, clean)];
+  const detailGroups = [...errorOmission, ...errors, ...flakyFinalSignalDetails(summary), ...failureDetails(summary, options, clean)];
   let actions = addResultsAction(options, webhookUrl, clean);
   const serialize = (entries: TextEntry[]) => JSON.stringify({
     type: "message",

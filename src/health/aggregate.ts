@@ -88,6 +88,8 @@ export interface HealthSummary {
   unavailable: number;
   passedWithSignals: number;
   recoveredWithSignals: number;
+  flakyWithFinalSignals: number;
+  flakyFinalKinds: { kind: string; tests: number }[];
   previousAttemptsWithSignals: number;
 }
 
@@ -102,6 +104,7 @@ interface AggregationState {
   annotationPrefix: string;
   groups: Map<string, CategoryGroup>;
   noise: Map<string, number>;
+  flakyFinalKinds: Map<string, number>;
 }
 
 function kindsFor(result: TestResult | undefined, prefix: string): string[] | undefined {
@@ -156,6 +159,10 @@ function recordTest(test: TestCase, state: AggregationState): void {
   const finalAttemptExpected = result?.status === test.expectedStatus &&
     result.status !== "skipped" && result.status !== "interrupted";
   if (outcome === "flaky" && finalAttemptExpected && (historical || realKinds.length > 0)) summary.recoveredWithSignals += 1;
+  if (outcome === "flaky" && !finalAttemptExpected && realKinds.length > 0) {
+    summary.flakyWithFinalSignals += 1;
+    for (const kind of realKinds) state.flakyFinalKinds.set(kind, (state.flakyFinalKinds.get(kind) ?? 0) + 1);
+  }
   if (result?.status === "passed" && outcome === "expected" && realKinds.length) summary.passedWithSignals += 1;
   if (outcome === "unexpected") recordUnexpected(test, result, realKinds, state);
 }
@@ -167,6 +174,9 @@ function finalizeGroups(state: AggregationState): void {
     kinds: [...group.kinds].sort(([left], [right]) => compare(left, right)).map(([kind, tests]) => ({ kind, tests })),
   }));
   summary.noise = [...noise].sort(([left], [right]) => compare(left, right)).map(([kind, tests]) => ({ kind, tests }));
+  summary.flakyFinalKinds = [...state.flakyFinalKinds]
+    .sort(([left], [right]) => compare(left, right))
+    .map(([kind, tests]) => ({ kind, tests }));
   summary.failures.sort((left, right) => compare(left.test.id, right.test.id));
 }
 
@@ -179,9 +189,12 @@ export function aggregateHealth(
     outcomes: { expected: 0, unexpected: 0, flaky: 0, skipped: 0 },
     assessments: { environment: 0, regression: 0, mixed: 0, undetermined: 0 },
     categories: [], noise: [], failures: [], unavailable: 0,
-    passedWithSignals: 0, recoveredWithSignals: 0, previousAttemptsWithSignals: 0,
+    passedWithSignals: 0, recoveredWithSignals: 0, flakyWithFinalSignals: 0,
+    flakyFinalKinds: [], previousAttemptsWithSignals: 0,
   };
-  const state: AggregationState = { summary, taxonomy, annotationPrefix, groups: new Map(), noise: new Map() };
+  const state: AggregationState = {
+    summary, taxonomy, annotationPrefix, groups: new Map(), noise: new Map(), flakyFinalKinds: new Map(),
+  };
   for (const test of suite.allTests()) recordTest(test, state);
   finalizeGroups(state);
   return summary;

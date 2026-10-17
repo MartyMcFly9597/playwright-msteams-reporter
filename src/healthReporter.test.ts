@@ -54,6 +54,22 @@ describe("optional health reporter", () => {
     expect(body).toContain("Recovered flaky tests with signal evidence: 1");
   });
 
+  it("reports final signals on flaky tests without labeling them recovered", async () => {
+    const reporter = new HealthReporter({ webhookUrl, quiet: true });
+    reporter.onBegin({} as FullConfig, { allTests: () => [{
+      id: "flaky-final-failed", titlePath: () => ["flaky-final-failed"], outcome: () => "flaky", expectedStatus: "passed",
+      results: [
+        { status: "passed", annotations: [], errors: [] },
+        { status: "failed", annotations: [{ type: "env-signal:http-5xx" }], errors: [] },
+      ],
+    }] } as unknown as Suite);
+    await reporter.onEnd(result);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const body = String(jest.mocked(global.fetch).mock.calls[0][1]?.body);
+    expect(body).toContain("Flaky tests with final-attempt signals: 1");
+    expect(body).not.toContain("Recovered flaky tests with signal evidence: 1");
+  });
+
   it("does not post a clean run containing only known noise", async () => {
     const reporter = new HealthReporter({
       webhookUrl,

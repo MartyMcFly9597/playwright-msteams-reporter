@@ -107,7 +107,8 @@ export default class HealthReporter implements Reporter {
     const total = Object.values(summary.outcomes).reduce((sum, count) => sum + count, 0);
     const runFailed = result.status !== "passed" || this.runnerErrors.length > 0;
     const hasSignals = summary.categories.length > 0 ||
-      summary.passedWithSignals > 0 || summary.recoveredWithSignals > 0 || summary.previousAttemptsWithSignals > 0;
+      summary.passedWithSignals > 0 || summary.recoveredWithSignals > 0 || summary.flakyWithFinalSignals > 0 ||
+      summary.previousAttemptsWithSignals > 0;
     if (total === 0 && !runFailed && !this.options.reportOnEmpty) return;
     if (!runFailed && summary.outcomes.unexpected === 0 && this.options.notifyOnSuccess === false) return;
     if (!runFailed && !summary.outcomes.unexpected && !hasSignals && !(total === 0 && this.options.reportOnEmpty)) return;
