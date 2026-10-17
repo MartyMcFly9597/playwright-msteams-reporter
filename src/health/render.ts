@@ -248,9 +248,9 @@ function failureDetails(summary: HealthSummary, options: HealthDisplayOptions, c
   return details;
 }
 
-function flakyFinalSignalDetails(summary: HealthSummary): TextEntry[][] {
+function flakyFinalSignalDetails(summary: HealthSummary, clean: (value: string, limit?: number) => string): TextEntry[][] {
   if (!summary.flakyWithFinalSignals) return [];
-  return summary.flakyFinalKinds.map(({ kind, tests }) => [textEntry(`${kind}: final-attempt signal on ${tests} flaky tests; recovery not established.`)]);
+  return summary.flakyFinalKinds.map(({ kind, tests }) => [textEntry(`${clean(kind, 120)}: final-attempt signal on ${tests} flaky tests; recovery not established.`)]);
 }
 
 function baseEntries(summary: HealthSummary, options: HealthDisplayOptions, context: HealthRunContext, clean: (value: string, limit?: number) => string): TextEntry[] {
@@ -275,7 +275,7 @@ export function buildHealthMessage(summary: HealthSummary, options: HealthDispla
   const body = baseEntries(summary, options, context, clean);
   const errors = context.errors.map(error => [textEntry(`Runner error: ${context.errorsSanitized ? error : clean(error)}`)]);
   const errorOmission = context.errorsOmitted ? [[textEntry(`${context.errorsOmitted} additional runner errors omitted.`)]] : [];
-  const detailGroups = [...errorOmission, ...errors, ...flakyFinalSignalDetails(summary), ...failureDetails(summary, options, clean)];
+  const detailGroups = [...errorOmission, ...errors, ...flakyFinalSignalDetails(summary, clean), ...failureDetails(summary, options, clean)];
   let actions = addResultsAction(options, webhookUrl, clean);
   const serialize = (entries: TextEntry[]) => JSON.stringify({
     type: "message",

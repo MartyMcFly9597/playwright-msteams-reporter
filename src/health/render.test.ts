@@ -117,6 +117,27 @@ describe("health card rendering", () => {
     expect(sanitizeHealthText(tripleEncoded)).not.toContain("triple-secret");
   });
 
+  it("sanitizes final signal kinds on non-recovered flaky tests", () => {
+    const summary = aggregateHealth({ allTests: () => [{
+      id: "flaky-final-sensitive-signal", titlePath: () => ["flaky-final-sensitive-signal"], outcome: () => "flaky", expectedStatus: "passed",
+      results: [
+        { status: "passed", annotations: [], errors: [] },
+        { status: "failed", annotations: [
+          { type: "env-signal:token=private" },
+          { type: "env-signal:untrusted-kind" },
+        ], errors: [] },
+      ],
+    }] } as unknown as Suite, compileCategories());
+    const message = buildHealthMessage(summary, {
+      sanitizeText: text => text.replace("untrusted-kind", "sanitized-kind"),
+    }, { status: "failed", duration: 0, errors: [] });
+
+    expect(message).not.toContain("token=private");
+    expect(message).toContain("token: <redacted");
+    expect(message).not.toContain("untrusted-kind");
+    expect(message).toContain("sanitized-kind");
+  });
+
   it("drops the optional results action before rejecting a minimum-budget summary", () => {
     const summary = {
       outcomes: { expected: 1, unexpected: 0, flaky: 1, skipped: 0 },
