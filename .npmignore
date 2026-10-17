@@ -6,6 +6,8 @@ src
 test-results
 tests
 scripts
+dist/**/*.test.js
+dist/**/*.test.d.ts
 CODEOWNERS
 
 playwright.config.ts

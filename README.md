@@ -166,6 +166,10 @@ clean signal-free run produces no follow-up. Its notification gates are
 independent of the original reporter. Submission order is sequential; the
 receiving service may still display messages in a different order.
 
+To roll back the optional health report, remove its second reporter entry. To
+stop evidence capture without changing reporting, remove the consumer fixture
+or `record()` calls; the original reporter remains independent.
+
 Signals are consumer-provided Playwright annotations using the
 `env-signal:<kind>` prefix by default. The reporter does not capture browser or
 network activity. `TestResult.annotations` requires Playwright 1.52 or later;
@@ -303,6 +307,21 @@ side-effect free: a candidate browser diagnostic may be classified and
 sanitized before a matching response suppresses it. Do not place raw traces,
 private URLs, or unbounded logger output in annotations.
 The helper creates no attachments and writes no output itself.
+
+### Package and Sharded-Run Verification
+
+Run `npm run test:package` to build and pack the artifact, then exercise its
+CommonJS/ESM entry points, TypeScript declarations, and fixture composition in
+temporary consumers. The command uses only a local HTTP receiver and synthetic
+tests; it does not contact a Teams endpoint or inspect application reports. The
+release gate covers Playwright 1.45 and the repository's locked version.
+
+Blob-report merging is outside this release gate. In a sharded workflow, send
+notifications from the final merge run rather than every shard, and verify
+that your Playwright version preserves the annotations needed by the health
+report before relying on signal classifications. Older versions may report
+evidence as unavailable. This package-level gate does not validate adoption in
+any particular application.
 
 Health reporter options:
 

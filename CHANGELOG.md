@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - Redact configured webhook URLs and their canonical URL forms from reporter logs without changing delivery.
 - Require `debug: true` for diagnostic dumps; `NODE_ENV=development` alone no longer enables them.
 - Add an optional `dist/healthCapture` fixture helper for bounded, sanitized browser evidence and consumer-owned environment-signal policies; existing reporters and fixture exports remain unchanged.
+- Add `npm run test:package` to verify packed CJS/ESM/TypeScript consumers, local-only sequential delivery, and the Playwright 1.45/current compatibility boundary.
 
 ## [0.0.13]
 
