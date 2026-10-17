@@ -166,9 +166,7 @@ clean signal-free run produces no follow-up. Its notification gates are
 independent of the original reporter. Submission order is sequential; the
 receiving service may still display messages in a different order.
 
-To roll back the optional health report, remove its second reporter entry. To
-stop evidence capture without changing reporting, remove the consumer fixture
-or `record()` calls; the original reporter remains independent.
+To roll back the optional health report, remove its second reporter entry. To stop automatic evidence capture without changing reporting, remove or disable the consumer fixture that calls `captureEnvSignals()`. Removing `record()` calls stops only manually added signals; the original reporter remains independent.
 
 Signals are consumer-provided Playwright annotations using the
 `env-signal:<kind>` prefix by default. The reporter does not capture browser or
