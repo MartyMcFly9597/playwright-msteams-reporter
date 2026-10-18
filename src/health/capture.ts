@@ -71,6 +71,18 @@ function cleanDescription(value: string, policy: ReturnType<typeof normalizeCapt
   return sanitizeHealthText(value, policy.maxDescriptionLength, undefined, policy.sanitizeText, false);
 }
 
+function defaultSignal(event: EnvSignalCaptureEvent): RetainedSignal | undefined {
+  if (event.source === "page-error") return { kind: "page-error", description: event.text ?? "" };
+  if (event.source === "console-error") return { kind: "console-error", description: event.text ?? "" };
+  if (event.source === "response" && event.status !== undefined && event.status >= 500) {
+    return { kind: "http-5xx", description: event.text ?? `HTTP ${event.status}` };
+  }
+  if (event.source === "request-failed" && event.text && !isIntentionalCancellation(event.text)) {
+    return { kind: "net-fail", description: event.text };
+  }
+  return undefined;
+}
+
 function isRelevantUrl(address: string | undefined, policy: ReturnType<typeof normalizeCaptureOptions>): boolean {
   if (!address) return true;
   try {
@@ -150,13 +162,8 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
         continue;
       }
     }
-    if (event.source === "page-error") appendSignal("page-error", event.text ?? "");
-    else if (event.source === "console-error") appendSignal("console-error", event.text ?? "");
-    else if (event.source === "response" && event.status !== undefined && event.status >= 500) {
-      appendSignal("http-5xx", event.text ?? `HTTP ${event.status}`);
-    } else if (event.source === "request-failed" && event.text && !isIntentionalCancellation(event.text)) {
-      appendSignal("net-fail", event.text);
-    }
+    const signal = defaultSignal(event);
+    if (signal) appendSignal(signal.kind, signal.description);
   };
 
   const classifyConsoleDiagnostic = (url: string, text: string): RetainedSignal | undefined => {
