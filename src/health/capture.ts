@@ -254,41 +254,49 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
     correlationTokens.set(token.id, token);
   };
 
+  const belongsToPage = (token: IgnoredResponseToken, target: Page): boolean => {
+    try {
+      return token.request?.frame().page() === target;
+    } catch {
+      return false;
+    }
+  };
+
+  const rebindResponseToken = (token: IgnoredResponseToken, target: Page): void => {
+    const key = responseKey(target, token.address, token.status);
+    const pendingConsole = responseQueues.get(key)?.consoleHead;
+    if (pendingConsole) {
+      removeCorrelationToken(token);
+      removeCorrelationToken(pendingConsole);
+      return;
+    }
+    unlinkCorrelationToken(token);
+    token.page = target;
+    token.key = key;
+    const queue = responseQueues.get(key) ?? {};
+    let next = queue.responseHead;
+    while (next && next.id < token.id) next = next.next;
+    if (next) {
+      token.next = next;
+      token.previous = next.previous;
+      if (next.previous) next.previous.next = token;
+      else queue.responseHead = token;
+      next.previous = token;
+    } else {
+      token.previous = queue.responseTail;
+      if (queue.responseTail) queue.responseTail.next = token;
+      else queue.responseHead = token;
+      queue.responseTail = token;
+    }
+    responseQueues.set(key, queue);
+  };
+
   const bindPendingResponses = (target: Page): void => {
     pruneExpiredCorrelationTokens(Date.now());
-    for (const token of [...correlationTokens.values()]) {
+    for (const token of correlationTokens.values()) {
       if (token.kind !== "response" || token.page || !token.request) continue;
-      try {
-        if (token.request.frame().page() !== target) continue;
-      } catch {
-        continue;
-      }
-      const key = responseKey(target, token.address, token.status);
-      const pendingConsole = responseQueues.get(key)?.consoleHead;
-      if (pendingConsole) {
-        removeCorrelationToken(token);
-        removeCorrelationToken(pendingConsole);
-        continue;
-      }
-      unlinkCorrelationToken(token);
-      token.page = target;
-      token.key = key;
-      const queue = responseQueues.get(token.key) ?? {};
-      let next = queue.responseHead;
-      while (next && next.id < token.id) next = next.next;
-      if (next) {
-        token.next = next;
-        token.previous = next.previous;
-        if (next.previous) next.previous.next = token;
-        else queue.responseHead = token;
-        next.previous = token;
-      } else {
-        token.previous = queue.responseTail;
-        if (queue.responseTail) queue.responseTail.next = token;
-        else queue.responseHead = token;
-        queue.responseTail = token;
-      }
-      responseQueues.set(token.key, queue);
+      if (!belongsToPage(token, target)) continue;
+      rebindResponseToken(token, target);
     }
   };
 
@@ -314,7 +322,7 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
     target.removeListener("close", listeners.onClose);
     pageListeners.delete(target);
     pages.delete(target);
-    for (const token of [...correlationTokens.values()]) {
+    for (const token of correlationTokens.values()) {
       if (token.page === target) retainExpiredConsole(token);
     }
   };
@@ -391,16 +399,14 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
   for (const existingPage of context.pages()) registerPage(existingPage);
   registerPage(page);
 
-  const dispose = (): void => {
-    if (disposed) return;
-    if (testInfo.status === "timedOut" || (testInfo.timeout > 0 && testInfo.duration >= testInfo.timeout)) {
-      appendSignal("test-timeout", "Test exceeded its configured time budget");
-    }
+  const flushPendingDiagnostics = (): void => {
     for (const registeredPage of pages) bindPendingResponses(registeredPage);
-    for (const token of [...correlationTokens.values()]) {
+    for (const token of correlationTokens.values()) {
       if (token.kind === "console") retainExpiredConsole(token);
     }
-    disposed = true;
+  };
+
+  const removeListeners = (): void => {
     context.removeListener("page", onPage);
     context.removeListener("request", onRequest);
     context.removeListener("response", onResponse);
@@ -412,6 +418,9 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
     pageListeners.clear();
     correlationTokens.clear();
     responseQueues.clear();
+  };
+
+  const appendAnnotations = (): void => {
     if (testInfo.status !== "passed" || policy.retainOnPass) {
       for (const signal of signals) {
         testInfo.annotations.push({
@@ -420,6 +429,17 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
         });
       }
     }
+  };
+
+  const dispose = (): void => {
+    if (disposed) return;
+    if (testInfo.status === "timedOut" || (testInfo.timeout > 0 && testInfo.duration >= testInfo.timeout)) {
+      appendSignal("test-timeout", "Test exceeded its configured time budget");
+    }
+    flushPendingDiagnostics();
+    disposed = true;
+    removeListeners();
+    appendAnnotations();
   };
 
   return { record, dispose };

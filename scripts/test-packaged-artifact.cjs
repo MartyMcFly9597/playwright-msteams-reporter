@@ -103,7 +103,7 @@ function writeConsumerFiles(directory) {
   const tests = path.join(directory, "tests");
   mkdirSync(tests, { recursive: true });
   writeFileSync(path.join(directory, "package.json"), JSON.stringify({ private: true, type: "commonjs" }));
-  writeFileSync(path.join(tests, "artifact.spec.cjs"), String.raw`
+  writeFileSync(path.join(tests, "artifact.spec.cjs"), `
 const { EventEmitter } = require("node:events");
 const { expect, test: base } = require("@playwright/test");
 const rootReporter = require("playwright-msteams-reporter");
@@ -127,7 +127,7 @@ test("packed CommonJS reporter and fixture", async ({ existingFixture, environme
   console.log("PACKED_STDOUT_ONCE");
 });
 `);
-  writeFileSync(path.join(tests, "types.spec.ts"), String.raw`
+  writeFileSync(path.join(tests, "types.spec.ts"), `
 import { expect, test } from "@playwright/test";
 import { captureEnvSignals, type EnvSignalCaptureOptions } from "playwright-msteams-reporter/dist/healthCapture";
 import type { HealthReporterOptions } from "playwright-msteams-reporter/dist/healthReporter";
@@ -139,13 +139,13 @@ test("packed TypeScript declarations resolve", async () => {
   expect(typeof captureEnvSignals).toBe("function");
 });
 `);
-  writeFileSync(path.join(tests, "legacy.spec.cjs"), String.raw`
+  writeFileSync(path.join(tests, "legacy.spec.cjs"), `
 const { expect, test } = require("@playwright/test");
 test("legacy runner reports a real failure without result annotations", () => {
   expect(1).toBe(2);
 });
 `);
-  writeFileSync(path.join(tests, "large.spec.cjs"), String.raw`
+  writeFileSync(path.join(tests, "large.spec.cjs"), `
 const { expect, test } = require("@playwright/test");
 for (let index = 0; index < 12; index += 1) {
   test("Unicode title " + "🚀".repeat(100) + " " + index, () => {
@@ -153,7 +153,7 @@ for (let index = 0; index < 12; index += 1) {
   });
 }
 `);
-  writeFileSync(path.join(tests, "types-consumer.ts"), String.raw`
+  writeFileSync(path.join(tests, "types-consumer.ts"), `
 import type { MsTeamsReporterOptions } from "playwright-msteams-reporter";
 import type { EnvSignalCaptureOptions } from "playwright-msteams-reporter/dist/healthCapture";
 import type { HealthReporterOptions } from "playwright-msteams-reporter/dist/healthReporter";
@@ -177,10 +177,13 @@ function configSource({ directory, format, webhookType, includeHealth, includeTy
     }]] : []),
     ["json", { outputFile }],
   ];
+  const testMatch = ["**/artifact.spec.cjs"];
+  if (largeFailure) testMatch.splice(0, testMatch.length, "**/large.spec.cjs");
+  else if (legacyFailure) testMatch.splice(0, testMatch.length, "**/legacy.spec.cjs");
+  else if (includeTypes) testMatch.push("**/types.spec.ts");
   const config = {
     testDir: path.join(directory, "tests"),
-    testMatch: largeFailure ? ["**/large.spec.cjs"] : legacyFailure ? ["**/legacy.spec.cjs"]
-      : includeTypes ? ["**/artifact.spec.cjs", "**/types.spec.ts"] : ["**/artifact.spec.cjs"],
+    testMatch,
     workers: 1, retries: 0, outputDir: path.join(directory, "results"), reporter: reporters,
   };
   if (format === "esm") {
@@ -210,12 +213,36 @@ async function runConsumer({ directory, format, webhookType, includeHealth, incl
     if ((!legacyFailure && !largeFailure) || typeof error.code !== "number") throw error;
     result = { stdout: error.stdout ?? "", stderr: error.stderr ?? "", exitCode: error.code };
   }
-  assert.equal(result.exitCode, legacyFailure || largeFailure ? 1 : 0, "Playwright test exit status must match the synthetic fixture outcome");
+  const hasExpectedFailure = legacyFailure || largeFailure;
+  assert.equal(result.exitCode, hasExpectedFailure ? 1 : 0, "Playwright test exit status must match the synthetic fixture outcome");
   const report = JSON.parse(readFileSync(outputFile, "utf8"));
   assert.deepEqual(report.errors, []);
-  assert.equal(report.stats.unexpected, largeFailure ? 12 : legacyFailure ? 1 : 0);
-  assert.equal(report.stats.expected, legacyFailure || largeFailure ? 0 : includeTypes ? 2 : 1);
+  let expectedCount = includeTypes ? 2 : 1;
+  let unexpectedCount = 0;
+  if (legacyFailure) {
+    expectedCount = 0;
+    unexpectedCount = 1;
+  }
+  if (largeFailure) {
+    expectedCount = 0;
+    unexpectedCount = 12;
+  }
+  assert.equal(report.stats.unexpected, unexpectedCount);
+  assert.equal(report.stats.expected, expectedCount);
   return result;
+}
+
+async function verifyStalledDelivery({ behavior, directory, receiver, receiverUrl }) {
+  receiver.setBehavior(behavior);
+  const stalled = await runConsumer({ directory, format: "cjs", webhookType: "msteams", includeHealth: true, includeTypes: true, timeoutMs: 1000, signal: true, receiverUrl });
+  assert.equal(receiver.requests.length, 2, `${behavior} must settle before the second report`);
+  assert.equal(receiver.requests[0].responseClosed, true, `${behavior} first response did not close`);
+  assert.equal(receiver.requests[1].firstResponseClosedBeforeRequest, true, `${behavior} second request began before the first response closed`);
+  const requestGap = receiver.requests[1].receivedAt - receiver.requests[0].receivedAt;
+  assert.ok(requestGap >= 700, `${behavior} second post arrived after only ${requestGap}ms, before the bounded wait settled`);
+  assert.match(stalled.stderr, /Webhook delivery timed out after 1000ms/);
+  assert.equal((stalled.stdout.match(/PACKED_STDOUT_ONCE/g) || []).length, 1);
+  assert.doesNotMatch(stalled.stdout + stalled.stderr, /synthetic-package-secret/);
 }
 
 async function verifyTypes(consumer) {
@@ -300,18 +327,8 @@ async function main() {
     assert.match(receiver.requests[1].body, /12 failed/);
     assert.match(receiver.requests[1].body, /additional detail groups omitted/);
 
-    for (const behavior of ["stall-headers", "stall-body"]) {
-      receiver.setBehavior(behavior);
-      const stalled = await runConsumer({ directory: currentConsumer, format: "cjs", webhookType: "msteams", includeHealth: true, includeTypes: true, timeoutMs: 1000, signal: true, receiverUrl });
-      assert.equal(receiver.requests.length, 2, `${behavior} must settle before the second report`);
-      assert.equal(receiver.requests[0].responseClosed, true, `${behavior} first response did not close`);
-      assert.equal(receiver.requests[1].firstResponseClosedBeforeRequest, true, `${behavior} second request began before the first response closed`);
-      const requestGap = receiver.requests[1].receivedAt - receiver.requests[0].receivedAt;
-      assert.ok(requestGap >= 700, `${behavior} second post arrived after only ${requestGap}ms, before the bounded wait settled`);
-      assert.match(stalled.stderr, /Webhook delivery timed out after 1000ms/);
-      assert.equal((stalled.stdout.match(/PACKED_STDOUT_ONCE/g) || []).length, 1);
-      assert.doesNotMatch(stalled.stdout + stalled.stderr, /synthetic-package-secret/);
-    }
+    await verifyStalledDelivery({ behavior: "stall-headers", directory: currentConsumer, receiver, receiverUrl });
+    await verifyStalledDelivery({ behavior: "stall-body", directory: currentConsumer, receiver, receiverUrl });
 
     receiver.setBehavior("success");
     await runConsumer({ directory: floorConsumer, format: "cjs", webhookType: "msteams", includeHealth: true, legacyFailure: true, signal: false, receiverUrl });
