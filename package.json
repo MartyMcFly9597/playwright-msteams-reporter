@@ -7,7 +7,8 @@
     "build": "tsc",
     "watch": "tsc -w",
     "test": "NODE_ENV=development npx playwright test",
-    "test:jest": "jest --coverage --coverageDirectory=../coverage"
+    "test:jest": "jest --coverage --coverageDirectory=../coverage",
+    "test:package": "npm run build && node scripts/test-packaged-artifact.cjs"
   },
   "repository": {
     "type": "git",
