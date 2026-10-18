@@ -2,7 +2,7 @@
 export interface EnvSignalCaptureOptions {
   /** Annotation type prefix. Defaults to `env-signal:`. */
   annotationPrefix?: string;
-  /** Allowed request hosts. Defaults to the fixture page host when available; otherwise no hosts are inferred. */
+  /** Allowed request hosts. When omitted, uses the page host, then the project `baseURL` host, then the supplied page's first non-excluded main-frame navigation host. */
   includeHosts?: string[];
   /** Hosts excluded even when they are included by policy. */
   excludeHosts?: string[];
