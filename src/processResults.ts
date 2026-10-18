@@ -111,7 +111,10 @@ function resolveLinkUrl(
   link: string | (() => string),
   options: MsTeamsReporterOptions,
 ): string | undefined {
-  const url = typeof link === "string" ? link : typeof link === "function" ? link.call(options) : undefined;
+  let url: unknown;
+  if (typeof link === "string") url = link;
+  else if (typeof link === "function") url = link.call(options);
+  else return undefined;
   if (typeof url !== "string" || !url.trim()) return undefined;
   try {
     const parsedUrl = new URL(url);
