@@ -12,6 +12,11 @@ import { redactWebhookUrl } from "./utils/redactWebhookUrl";
 import { resolveWebhookUrl } from "./utils/resolveWebhookUrl";
 import { resolveWebhookTimeout } from "./utils/resolveWebhookTimeout";
 
+export interface Link {
+  text: string;
+  url: string | ((this: MsTeamsReporterOptions) => string);
+}
+
 export interface MsTeamsReporterOptions {
   webhookUrl?: string;
   webhookUrlEnv?: string;
@@ -22,6 +27,7 @@ export interface MsTeamsReporterOptions {
   linkToResultsText?: string;
   linkUrlOnFailure?: string | (() => string);
   linkTextOnFailure?: string;
+  links?: Link[];
   notifyOnSuccess?: boolean;
   mentionOnFailure?: string;
   mentionOnFailureText?: string;
@@ -46,6 +52,8 @@ export default class MsTeamsReporter implements Reporter {
       title: "Playwright Test Results",
       linkToResultsUrl: undefined,
       linkToResultsText: "View test results",
+      linkUrlOnFailure: undefined,
+      linkTextOnFailure: "View failed tests",
       notifyOnSuccess: true,
       mentionOnFailure: undefined,
       mentionOnFailureText: "{mentions} please validate the test results.",

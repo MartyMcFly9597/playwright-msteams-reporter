@@ -132,7 +132,8 @@ The reporter supports the following configuration options:
 | `linkToResultsUrl`     | Link to the test results                                        | `string \| () => string` | `false`  | `undefined`                                    |
 | `linkToResultsText`    | Text for the link to the test results                           | `string`                 | `false`  | `View test results`                            |
 | `linkUrlOnFailure`     | Link to page where you can view, trigger, etc. the failed tests | `string \| () => string` | `false`  | `undefined`                                    |
-| `linkTextOnFailure`    | Text for the failed tests link action                           | `string`                 | `false`  | `undefined`                                    |
+| `linkTextOnFailure`    | Text for the failed tests link action                           | `string`                 | `false`  | `View failed tests`                            |
+| `links`                | Additional named link buttons                                  | `Link[]`                 | `false`  | `undefined`                                    |
 | `notifyOnSuccess`      | Notify on success                                               | `boolean`                | `false`  | `true`                                         |
 | `mentionOnFailure`     | Mention users on failure (comma separated list)                 | `string`                 | `false`  | `undefined`                                    |
 | `mentionOnFailureText` | Text to mention users on failure                                | `string`                 | `false`  | `{mentions} please validate the test results.` |
@@ -456,6 +457,23 @@ The format can be either the full name and email (`"Full name <email>"`) or just
 ### Link to the results
 
 With the `linkToResultsUrl` option, you can provide a link to the test results. For example, you can view the test results on your CI/CD platform.
+
+Use the optional `links` array to add more buttons, such as a CI run and a
+published HTML report. Each link needs non-empty `text` and an absolute HTTP(S)
+`url`, provided as a string or a function returning a URL. Extra link buttons
+appear after the results link and before the failure-only link. The reporter
+does not publish or host the linked report.
+
+```typescript
+{
+  linkToResultsUrl: "https://ci.example/runs/123",
+  links: [
+    { text: "CI run", url: "https://ci.example/runs/123" },
+    { text: "HTML report", url: () => process.env.REPORT_URL ?? "" },
+  ],
+  linkUrlOnFailure: "https://ci.example/runs/123/failures",
+}
+```
 
 ### Conditional reporting (shouldRun)
 

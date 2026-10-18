@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Add an optional `links` array for additional Adaptive Card buttons and default the failure-link text to `View failed tests`.
 - Add an optional application-neutral test-run health reporter at `playwright-msteams-reporter/dist/healthReporter`; it posts a separate bounded Adaptive Card after the original report when run evidence warrants it.
 - Bound webhook requests and response-body reads with `webhookTimeoutMs` (default 10 seconds); report redacted transport failures without changing test outcomes or retrying delivery.
 - Resolve omitted or explicitly `undefined` webhook destinations from `MSTEAMS_WEBHOOK_URL` or a custom `webhookUrlEnv` without modifying reporter configuration; an explicit empty URL disables delivery. Config expressions evaluating to `undefined` now use this fallback.
