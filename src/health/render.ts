@@ -3,14 +3,23 @@ import type { HealthSummary } from "./aggregate";
 import { redactWebhookUrl } from "../utils/redactWebhookUrl";
 
 export interface HealthDisplayOptions {
+  /** Card heading. Defaults to `Test Run Health`. */
   title?: string;
+  /** Optional environment label prefixed to the card heading. */
   environment?: string;
+  /** Maximum failed-test detail groups to include. Defaults to 5; valid range is 0 to 100. */
   maxTests?: number;
+  /** Maximum serialized webhook envelope size in UTF-8 bytes. Defaults to 26000; valid range is 4096 to 26000. */
   maxPayloadBytes?: number;
+  /** Maps a failed test to its displayed label. Throwing or non-string results use the test title path. */
   testLabel?: (test: TestCase) => string;
+  /** Optional domain-specific sanitizer applied after built-in sanitization. Invalid or throwing results omit the detail. */
   sanitizeText?: (text: string) => string;
+  /** Primary results URL, or a callback resolved while creating the card. */
   linkToResultsUrl?: string | (() => string);
+  /** Label for the primary results action. Defaults to `View test results`. */
   linkToResultsText?: string;
+  /** Whether query strings and fragments are retained in the results action. Defaults to `strip-query`. */
   resultsLinkPolicy?: "strip-query" | "preserve";
 }
 

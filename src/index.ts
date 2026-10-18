@@ -12,31 +12,55 @@ import { redactWebhookUrl } from "./utils/redactWebhookUrl";
 import { resolveWebhookUrl } from "./utils/resolveWebhookUrl";
 import { resolveWebhookTimeout } from "./utils/resolveWebhookTimeout";
 
+/** A named URL action appended to a Teams Adaptive Card. */
 export interface Link {
+  /** Button text. Links with empty text are omitted. */
   text: string;
+  /** Absolute HTTP(S) URL, or a callback resolved when the report is generated. */
   url: string | ((this: MsTeamsReporterOptions) => string);
 }
 
+/** Configuration for the Microsoft Teams Playwright reporter. */
 export interface MsTeamsReporterOptions {
+  /** Explicit webhook URL. An empty string disables delivery and environment fallback. */
   webhookUrl?: string;
+  /** Environment variable name used when `webhookUrl` is omitted. Defaults to `MSTEAMS_WEBHOOK_URL`. */
   webhookUrlEnv?: string;
+  /** Request and response-body deadline in milliseconds. Defaults to 10000. */
   webhookTimeoutMs?: number;
+  /** Webhook payload family. Defaults to `powerautomate`. */
   webhookType?: WebhookType;
+  /** Card heading. Defaults to `Playwright Test Results`. */
   title?: string;
-  linkToResultsUrl?: string | (() => string);
+  /** URL for the primary results action; callbacks run with this options object as `this`. */
+  linkToResultsUrl?: string | ((this: MsTeamsReporterOptions) => string);
+  /** Label for `linkToResultsUrl`. Defaults to `View test results`. */
   linkToResultsText?: string;
-  linkUrlOnFailure?: string | (() => string);
+  /** URL shown only when the run has failed tests; callbacks run with this options object as `this`. */
+  linkUrlOnFailure?: string | ((this: MsTeamsReporterOptions) => string);
+  /** Failure action label. Defaults to `View failed tests`. An empty label omits the action. */
   linkTextOnFailure?: string;
+  /** Additional named actions, placed after the primary results action and before the failure action. */
   links?: Link[];
+  /** Send a notification for a successful run. Defaults to true. */
   notifyOnSuccess?: boolean;
+  /** Comma-separated email addresses to mention when tests fail. */
   mentionOnFailure?: string;
+  /** Mention message template. `{mentions}` is replaced with Teams mention markup. */
   mentionOnFailureText?: string;
+  /** Include an emoji matching the test result in the card. Defaults to false. */
   enableEmoji?: boolean;
+  /** Suppress forwarded test output and success chatter. Defaults to false. */
   quiet?: boolean;
+  /** Log redacted reporter options and the outgoing card. Defaults to false. */
   debug?: boolean;
+  /** Predicate that can suppress reporting for a suite. Defaults to a predicate that returns true. */
   shouldRun?: (suite: Suite) => boolean;
+  /** Send a report when the run contains no tests. Defaults to false. */
   reportOnEmpty?: boolean;
+  /** Include the run duration in the card. Defaults to false. */
   enableDuration?: boolean;
+  /** Mention commit or pull request authors when Playwright git metadata is available. Defaults to false. */
   mentionAuthors?: boolean;
 }
 

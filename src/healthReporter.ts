@@ -9,11 +9,16 @@ import { resolveWebhookTimeout } from "./utils/resolveWebhookTimeout";
 import { sendWebhookMessage } from "./utils/sendWebhookMessage";
 
 export type { HealthCategory } from "./health/aggregate";
+
+/** Configuration for the optional health summary reporter. */
 export interface HealthReporterOptions extends HealthDisplayOptions, Pick<MsTeamsReporterOptions,
   "webhookUrl" | "webhookUrlEnv" | "webhookTimeoutMs" | "webhookType" | "quiet" | "debug" |
   "notifyOnSuccess" | "reportOnEmpty" | "shouldRun"> {
+  /** Disable this reporter without changing other reporters. Defaults to enabled. */
   enabled?: boolean;
+  /** Prefix used to recognize Playwright annotations as environment-signal evidence. Defaults to `env-signal:`. */
   annotationPrefix?: string;
+  /** Ordered signal-category mapping. When supplied, replaces the built-in categories. */
   categories?: HealthCategory[];
 }
 
@@ -60,6 +65,7 @@ function validateOptions(options: HealthReporterOptions): void {
   validateResultsLink(options);
 }
 
+/** Sends a separate bounded health summary after a Playwright test run. */
 export default class HealthReporter implements Reporter {
   private suite?: Suite;
   private readonly options: HealthReporterOptions;
@@ -67,6 +73,7 @@ export default class HealthReporter implements Reporter {
   private readonly runnerErrors: string[] = [];
   private runnerErrorsOmitted = 0;
 
+  /** Create a health reporter. Delivery and notification gates follow the supplied options. */
   constructor(options: HealthReporterOptions = {}) {
     validateOptions(options);
     this.taxonomy = compileCategories(options.categories);

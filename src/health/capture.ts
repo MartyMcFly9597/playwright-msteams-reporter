@@ -4,14 +4,21 @@ import { normalizeCaptureOptions } from "./captureOptions";
 import type { EnvSignalCaptureEvent, EnvSignalCaptureOptions, EnvSignalRecord } from "./captureTypes";
 
 export interface CaptureEnvSignalsOptions {
+  /** Playwright page whose events should be captured. */
   page: Page;
+  /** Browser context used to observe popups, requests, and responses. */
   context: BrowserContext;
+  /** Current test info; captured signals are appended to its annotations during disposal. */
   testInfo: TestInfo;
+  /** Host filtering, retention, classification, and sanitization policy. */
   options?: EnvSignalCaptureOptions;
 }
 
+/** Controls for a capture instance created by {@link captureEnvSignals}. */
 export interface EnvSignalCapture {
+  /** Add a manually identified signal after applying the configured policy and limits. */
   record(event: EnvSignalRecord): void;
+  /** Stop observing events, flush retained evidence, and append annotations once. */
   dispose(): void;
 }
 
@@ -100,6 +107,11 @@ function isRelevantUrl(address: string | undefined, policy: ReturnType<typeof no
   }
 }
 
+/**
+ * Observe the supplied page and context and retain bounded, sanitized environment evidence.
+ * Call from an opt-in lazy fixture and always call `dispose()` in its `finally` block.
+ * The helper records Playwright annotations; it does not send a webhook itself.
+ */
 export function captureEnvSignals({ page, context, testInfo, options = {} }: CaptureEnvSignalsOptions): EnvSignalCapture {
   const policy = normalizeCaptureOptions(options, pageHost(page, testInfo));
   const discoverFirstHost = options.includeHosts === undefined && policy.includeHosts.length === 0;
