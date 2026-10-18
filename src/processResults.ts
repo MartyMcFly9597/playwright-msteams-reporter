@@ -107,10 +107,33 @@ function addResultsLink(
   }
 }
 
+function resolveLinkUrl(
+  link: string | (() => string),
+  options: MsTeamsReporterOptions,
+): string | undefined {
+  const url = typeof link === "string" ? link : typeof link === "function" ? link.call(options) : undefined;
+  if (typeof url !== "string" || !url.trim()) return undefined;
+  try {
+    const parsedUrl = new URL(url);
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") return undefined;
+    return parsedUrl.href;
+  } catch {
+    return undefined;
+  }
+}
+
 function addReportLinks(adaptiveCard: AdaptiveCard, options: MsTeamsReporterOptions, isSuccess: boolean) {
   addResultsLink(adaptiveCard, options.linkToResultsUrl, options.linkToResultsText, options);
-  if (!isSuccess && options.linkTextOnFailure && options.linkUrlOnFailure) {
-    addResultsLink(adaptiveCard, options.linkUrlOnFailure, options.linkTextOnFailure, options);
+  for (const link of options.links ?? []) {
+    if (!link || typeof link.text !== "string" || !link.text.trim() || !link.url) continue;
+    const url = resolveLinkUrl(link.url, options);
+    if (url) adaptiveCard.actions.push({ type: "Action.OpenUrl", title: link.text, url });
+  }
+  if (!isSuccess && options.linkUrlOnFailure) {
+    const failureLinkText = options.linkTextOnFailure ?? "View failed tests";
+    if (failureLinkText.trim()) {
+      addResultsLink(adaptiveCard, options.linkUrlOnFailure, failureLinkText, options);
+    }
   }
 }
 

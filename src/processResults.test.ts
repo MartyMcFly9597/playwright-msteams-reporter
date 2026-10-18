@@ -1,4 +1,4 @@
-import { MsTeamsReporterOptions } from ".";
+import { Link, MsTeamsReporterOptions } from ".";
 import { processResults } from "./processResults";
 
 const MSTEAMS_WEBHOOK_URL = `https://tenant.webhook.office.com/webhookb2/12345678-1234-1234-1234-123456789abc@12345678-1234-1234-1234-123456789abc/IncomingWebhook/123456789abcdef123456789abcdef12/12345678-1234-1234-1234-123456789abc`;
@@ -619,5 +619,116 @@ describe("processResults", () => {
     await processResults(suite, options, durationMs);
     const body = fetchMock.mock.calls[0][1].body;
     expect(body).not.toContain("2m 5s");
+  });
+
+  it("uses the default label for a failure link and places extra links between result and failure links", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, text: async () => "1" });
+    global.fetch = fetchMock;
+    const options: MsTeamsReporterOptions = {
+      ...DEFAULT_OPTIONS,
+      webhookUrl: MSTEAMS_WEBHOOK_URL,
+      linkToResultsUrl: "https://acme.example/results",
+      linkUrlOnFailure: "https://acme.example/failures",
+    };
+    const links: Link[] = [
+      { text: "CI run", url: "https://acme.example/run" },
+      { text: "HTML report", url: () => "https://acme.example/report" },
+    ];
+    options.links = links;
+
+    await processResults(SUITE_MOCK_FAILED as any, options);
+
+    const actions = JSON.parse(fetchMock.mock.calls[0][1].body).attachments[0].content.actions;
+    expect(actions).toEqual([
+      { type: "Action.OpenUrl", title: "View test results", url: "https://acme.example/results" },
+      { type: "Action.OpenUrl", title: "CI run", url: "https://acme.example/run" },
+      { type: "Action.OpenUrl", title: "HTML report", url: "https://acme.example/report" },
+      { type: "Action.OpenUrl", title: "View failed tests", url: "https://acme.example/failures" },
+    ]);
+  });
+
+  it.each(["", "   "])("omits the failure link when its configured label is empty (%j)", async (linkTextOnFailure) => {
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, text: async () => "1" });
+    global.fetch = fetchMock;
+    const options: MsTeamsReporterOptions = {
+      ...DEFAULT_OPTIONS,
+      webhookUrl: MSTEAMS_WEBHOOK_URL,
+      linkUrlOnFailure: "https://acme.example/failures",
+      linkTextOnFailure,
+    };
+
+    await processResults(SUITE_MOCK_FAILED as any, options);
+
+    const actions = JSON.parse(fetchMock.mock.calls[0][1].body).attachments[0].content.actions;
+    expect(actions).toEqual([]);
+  });
+
+  it("invokes additional URL callbacks with the options object as this", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, text: async () => "1" });
+    global.fetch = fetchMock;
+    const options: MsTeamsReporterOptions = {
+      ...DEFAULT_OPTIONS,
+      webhookUrl: MSTEAMS_WEBHOOK_URL,
+      title: "Test title",
+    };
+    options.links = [{
+      text: "Dynamic link",
+      url(this: MsTeamsReporterOptions) {
+        return `https://acme.example/${this.title}`;
+      },
+    }];
+
+    await processResults(SUITE_MOCK_PASSED as any, options);
+
+    const actions = JSON.parse(fetchMock.mock.calls[0][1].body).attachments[0].content.actions;
+    expect(actions).toEqual([
+      { type: "Action.OpenUrl", title: "Dynamic link", url: "https://acme.example/Test%20title" },
+    ]);
+  });
+
+  it("normalizes valid additional URLs before adding the card action", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, text: async () => "1" });
+    global.fetch = fetchMock;
+    const options: MsTeamsReporterOptions = {
+      ...DEFAULT_OPTIONS,
+      webhookUrl: MSTEAMS_WEBHOOK_URL,
+    };
+    options.links = [{
+      text: "Report",
+      url: () => "  https://acme.example/report path  ",
+    }];
+
+    await processResults(SUITE_MOCK_PASSED as any, options);
+
+    const actions = JSON.parse(fetchMock.mock.calls[0][1].body).attachments[0].content.actions;
+    expect(actions).toEqual([
+      { type: "Action.OpenUrl", title: "Report", url: "https://acme.example/report%20path" },
+    ]);
+  });
+
+  it("skips additional links with missing text or unusable URLs", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, text: async () => "1" });
+    global.fetch = fetchMock;
+    const options: MsTeamsReporterOptions = {
+      ...DEFAULT_OPTIONS,
+      webhookUrl: MSTEAMS_WEBHOOK_URL,
+    };
+    options.links = [
+      { text: "", url: "https://acme.example/empty-title" },
+      { text: "   ", url: "https://acme.example/whitespace-title" },
+      { text: "No URL", url: () => "" },
+      { text: "Malformed URL", url: "not-a-url" },
+      { text: "Unsupported scheme", url: "ftp://acme.example/file" },
+      { text: "Non-string URL value", url: 123 as any },
+      { text: "Non-string URL", url: (() => 1) as any },
+      { text: "Valid", url: "https://acme.example/valid" },
+    ];
+
+    await processResults(SUITE_MOCK_PASSED as any, options);
+
+    const actions = JSON.parse(fetchMock.mock.calls[0][1].body).attachments[0].content.actions;
+    expect(actions).toEqual([
+      { type: "Action.OpenUrl", title: "Valid", url: "https://acme.example/valid" },
+    ]);
   });
 });
