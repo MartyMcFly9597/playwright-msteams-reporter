@@ -1,10 +1,16 @@
 import type { Suite, TestCase, TestResult } from "@playwright/test/reporter";
 
 export type Assessment = "environment" | "regression" | "mixed" | "undetermined";
+
+/** Maps signal kinds to a best-effort evidence category in the health report. */
 export interface HealthCategory {
+  /** User-facing category name. Names must be unique; `Other signals` is reserved. */
   name: string;
+  /** Signal kind patterns. `*` matches any sequence; matching is case-sensitive. */
   kinds: string[];
+  /** Treat matched signals as ambient context rather than failure evidence. */
   noise?: boolean;
+  /** Assessment assigned to failures with a matching signal. Defaults to undetermined. */
   assessment?: Exclude<Assessment, "mixed">;
 }
 interface CompiledCategory { category: HealthCategory; patterns: string[] }
