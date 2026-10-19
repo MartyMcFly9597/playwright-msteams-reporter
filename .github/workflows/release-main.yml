@@ -21,9 +21,13 @@ jobs:
       - name: Run tests
         run: npm run test:jest
 
+      - name: Verify packed package
+        run: npm run test:package
+
   release:
     runs-on: ubuntu-latest
     needs: test
+    if: github.event_name != 'release' || github.event.release.prerelease == false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

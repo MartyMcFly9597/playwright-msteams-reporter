@@ -1,7 +1,13 @@
 .github
+.vscode
 assets
+blob-report
 coverage
+.env
+.env.*
+.npmrc
 playwright-report
+docs
 node_modules
 src
 test-results
