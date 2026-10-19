@@ -1,8 +1,8 @@
 # Microsoft Teams reporter for Playwright
 
-[![npm version](https://badge.fury.io/js/playwright-msteams-reporter.svg)](https://badge.fury.io/js/playwright-msteams-reporter)
-[![Downloads](https://img.shields.io/npm/dt/playwright-msteams-reporter)](https://www.npmjs.com/package/playwright-msteams-reporter)
-![License](https://img.shields.io/github/license/estruyf/playwright-msteams-reporter)
+[![npm version](https://img.shields.io/npm/v/@martymcfly9597/playwright-msteams-reporter)](https://www.npmjs.com/package/@martymcfly9597/playwright-msteams-reporter)
+[![Downloads](https://img.shields.io/npm/dt/@martymcfly9597/playwright-msteams-reporter)](https://www.npmjs.com/package/@martymcfly9597/playwright-msteams-reporter)
+![License](https://img.shields.io/github/license/MartyMcFly9597/playwright-msteams-reporter)
 
 This reporter for Playwright allows you to send the test results to a Microsoft Teams channel and mention users on failure.
 
@@ -56,7 +56,7 @@ To use this reporter, you need to create an incoming webhook for your Microsoft 
 Install from npm:
 
 ```bash
-npm install playwright-msteams-reporter
+npm install @martymcfly9597/playwright-msteams-reporter
 ```
 
 ## Usage
@@ -65,13 +65,13 @@ You can configure the reporter by adding it to the `playwright.config.js` file:
 
 ```javascript
 import { defineConfig } from '@playwright/test';
-import type { MsTeamsReporterOptions } from "playwright-msteams-reporter";
+import type { MsTeamsReporterOptions } from "@martymcfly9597/playwright-msteams-reporter";
 
 export default defineConfig({
   reporter: [
     ['list'],
     [
-      'playwright-msteams-reporter',
+      '@martymcfly9597/playwright-msteams-reporter',
       <MsTeamsReporterOptions>{
         webhookType: "powerautomate", // or "msteams"
       }
@@ -108,7 +108,7 @@ resolves it internally; do not put the secret value in the configuration above.
 For a custom secret variable, keep only its name in reporter options:
 
 ```javascript
-reporter: [['playwright-msteams-reporter', {
+reporter: [['@martymcfly9597/playwright-msteams-reporter', {
   webhookUrlEnv: 'ACME_TEAMS_WEBHOOK',
   webhookType: 'powerautomate',
 }]]
@@ -147,14 +147,14 @@ The reporter supports the following configuration options:
 
 ### Optional Test Run Health Report
 
-The independent health reporter is available at the `playwright-msteams-reporter/dist/healthReporter`
+The independent health reporter is available at the `@martymcfly9597/playwright-msteams-reporter/dist/healthReporter`
 subpath. Register it after the original reporter so its webhook request follows
 the original summary:
 
 ```javascript
 reporter: [
-  ["playwright-msteams-reporter", { webhookType: "powerautomate" }],
-  ["playwright-msteams-reporter/dist/healthReporter", {
+  ["@martymcfly9597/playwright-msteams-reporter", { webhookType: "powerautomate" }],
+  ["@martymcfly9597/playwright-msteams-reporter/dist/healthReporter", {
     webhookType: "powerautomate",
     webhookUrlEnv: "MSTEAMS_WEBHOOK_URL",
   }],
@@ -178,13 +178,13 @@ capture is optional and separate from reporter setup; see the helper below.
 ### Optional Environment Signal Capture
 
 The opt-in helper is available from
-`playwright-msteams-reporter/dist/healthCapture`. It composes with the fixture
+`@martymcfly9597/playwright-msteams-reporter/dist/healthCapture`. It composes with the fixture
 exports already used by a project; it does not replace `page`, `context`, or
 other fixtures. Each consumer creates its own capture instance and policy.
 
 ```typescript
 import { test as base } from "@playwright/test";
-import { captureEnvSignals } from "playwright-msteams-reporter/dist/healthCapture";
+import { captureEnvSignals } from "@martymcfly9597/playwright-msteams-reporter/dist/healthCapture";
 
 type Fixtures = { environmentEvidence: void };
 
@@ -224,7 +224,7 @@ CommonJS without replacing their existing fixture exports:
 
 ```javascript
 const { test: base } = require("@playwright/test");
-const { captureEnvSignals } = require("playwright-msteams-reporter/dist/healthCapture");
+const { captureEnvSignals } = require("@martymcfly9597/playwright-msteams-reporter/dist/healthCapture");
 
 exports.test = base.extend({
   environmentEvidence: async ({ page, context }, use, testInfo) => {
@@ -525,7 +525,7 @@ You can combine the Microsoft Teams reporter with the Playwright Azure Reporter 
 ```typescript
 import { defineConfig } from "@playwright/test";
 import type { AzureReporterOptions } from "@alex_neo/playwright-azure-reporter";
-import type { MsTeamsReporterOptions } from "playwright-msteams-reporter";
+import type { MsTeamsReporterOptions } from "@martymcfly9597/playwright-msteams-reporter";
 
 export default defineConfig({
   reporter: [
@@ -539,7 +539,7 @@ export default defineConfig({
     ],
     // Then define the Microsoft Teams reporter
     [
-      'playwright-msteams-reporter',
+      '@martymcfly9597/playwright-msteams-reporter',
       <MsTeamsReporterOptions>{
         webhookUrl: "<webhookUrl>",
         // Instead of providing the URL directly, you need to provide a function that returns the URL.
@@ -567,4 +567,4 @@ Make sure to provide the environment variables in your Azure DevOps pipeline:
 
 <br />
 
-[![Visitors](https://api.visitorbadge.io/api/visitors?path=https%3A%2F%2Fgithub.com%2Festruyf%2Fplaywright-msteams-reporter&countColor=%23263759)](https://visitorbadge.io/status?path=https%3A%2F%2Fgithub.com%2Festruyf%2Fplaywright-msteams-reporter)
+[![Visitors](https://api.visitorbadge.io/api/visitors?path=https%3A%2F%2Fgithub.com%2FMartyMcFly9597%2Fplaywright-msteams-reporter&countColor=%23263759)](https://visitorbadge.io/status?path=https%3A%2F%2Fgithub.com%2FMartyMcFly9597%2Fplaywright-msteams-reporter)

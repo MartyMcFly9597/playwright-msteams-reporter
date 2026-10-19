@@ -34,7 +34,7 @@ describe("webhook environment configuration", () => {
   it.each(["msteams", "powerautomate"] as const)("resolves the default variable for %s without mutating config", async (webhookType) => {
     process.env.MSTEAMS_WEBHOOK_URL = defaultUrl;
     const options = Object.freeze({ webhookType, debug: true, webhookUrl: undefined });
-    const config = Object.freeze({ reporter: [["playwright-msteams-reporter", options]] });
+    const config = Object.freeze({ reporter: [["@martymcfly9597/playwright-msteams-reporter", options]] });
     const before = JSON.stringify(config);
     const reporter = new MsTeamsReporter(options);
     reporter.onBegin(config as unknown as FullConfig, suite);
