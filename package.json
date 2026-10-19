@@ -32,6 +32,9 @@
     "url": "https://github.com/MartyMcFly9597/playwright-msteams-reporter/issues"
   },
   "homepage": "https://github.com/MartyMcFly9597/playwright-msteams-reporter#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
     "@tsconfig/recommended": "^1.0.13",
