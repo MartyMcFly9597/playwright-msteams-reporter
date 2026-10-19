@@ -277,6 +277,7 @@ async function main() {
     }
     assert(!Object.hasOwn(require(path.join(root, "package.json")), "exports"), "Do not add an exports map that blocks existing deep imports");
     assert(!packed.files.some(file => /\.test\.(?:js|d\.ts)$/.test(file.path)), "Packed artifact must not contain compiled tests");
+    assert(!packed.files.some(file => /^(?:playwright-report|test-results)\//.test(file.path)), "Packed artifact must not contain generated Playwright reports or test results");
 
     const currentConsumer = path.join(directory, "consumer-current");
     const floorConsumer = path.join(directory, "consumer-floor");
