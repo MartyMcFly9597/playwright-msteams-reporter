@@ -106,10 +106,10 @@ function writeConsumerFiles(directory) {
   writeFileSync(path.join(tests, "artifact.spec.cjs"), `
 const { EventEmitter } = require("node:events");
 const { expect, test: base } = require("@playwright/test");
-const rootReporter = require("playwright-msteams-reporter");
-const healthReporter = require("playwright-msteams-reporter/dist/healthReporter");
-require("playwright-msteams-reporter/dist/models");
-const { captureEnvSignals } = require("playwright-msteams-reporter/dist/healthCapture");
+const rootReporter = require("@martymcfly9597/playwright-msteams-reporter");
+const healthReporter = require("@martymcfly9597/playwright-msteams-reporter/dist/healthReporter");
+require("@martymcfly9597/playwright-msteams-reporter/dist/models");
+const { captureEnvSignals } = require("@martymcfly9597/playwright-msteams-reporter/dist/healthCapture");
 if (typeof rootReporter.default !== "function" || typeof healthReporter.default !== "function") throw new Error("Packed CommonJS reporter entry point failed");
 const existing = base.extend({ existingFixture: async ({}, use) => use("preserved") });
 const test = existing.extend({
@@ -129,8 +129,8 @@ test("packed CommonJS reporter and fixture", async ({ existingFixture, environme
 `);
   writeFileSync(path.join(tests, "types.spec.ts"), `
 import { expect, test } from "@playwright/test";
-import { captureEnvSignals, type EnvSignalCaptureOptions } from "playwright-msteams-reporter/dist/healthCapture";
-import type { HealthReporterOptions } from "playwright-msteams-reporter/dist/healthReporter";
+import { captureEnvSignals, type EnvSignalCaptureOptions } from "@martymcfly9597/playwright-msteams-reporter/dist/healthCapture";
+import type { HealthReporterOptions } from "@martymcfly9597/playwright-msteams-reporter/dist/healthReporter";
 const captureOptions: EnvSignalCaptureOptions = { includeHosts: ["app.acme.example"], retainOnPass: true };
 const reporterOptions: HealthReporterOptions = { webhookUrlEnv: "PACKED_WEBHOOK", quiet: true };
 test("packed TypeScript declarations resolve", async () => {
@@ -154,9 +154,9 @@ for (let index = 0; index < 12; index += 1) {
 }
 `);
   writeFileSync(path.join(tests, "types-consumer.ts"), `
-import type { MsTeamsReporterOptions } from "playwright-msteams-reporter";
-import type { EnvSignalCaptureOptions } from "playwright-msteams-reporter/dist/healthCapture";
-import type { HealthReporterOptions } from "playwright-msteams-reporter/dist/healthReporter";
+import type { MsTeamsReporterOptions } from "@martymcfly9597/playwright-msteams-reporter";
+import type { EnvSignalCaptureOptions } from "@martymcfly9597/playwright-msteams-reporter/dist/healthCapture";
+import type { HealthReporterOptions } from "@martymcfly9597/playwright-msteams-reporter/dist/healthReporter";
 const original: MsTeamsReporterOptions = { webhookUrlEnv: "PACKED_WEBHOOK", webhookType: "msteams" };
 const health: HealthReporterOptions = { webhookUrlEnv: "PACKED_WEBHOOK", webhookType: "powerautomate" };
 const capture: EnvSignalCaptureOptions = { includeHosts: ["app.acme.example"] };
@@ -165,7 +165,7 @@ void [original, health, capture];
 }
 
 function configSource({ directory, format, webhookType, includeHealth, includeTypes, legacyFailure, largeFailure, timeoutMs, outputFile }) {
-  const consumer = path.join(directory, "node_modules", "playwright-msteams-reporter", "dist");
+  const consumer = path.join(directory, "node_modules", "@martymcfly9597", "playwright-msteams-reporter", "dist");
   const reporters = [
     [path.join(consumer, "index.js"), {
       webhookUrlEnv: "PACKED_WEBHOOK", webhookType, title: "Original Results", quiet: false, webhookTimeoutMs: timeoutMs,
@@ -187,9 +187,9 @@ function configSource({ directory, format, webhookType, includeHealth, includeTy
     workers: 1, retries: 0, outputDir: path.join(directory, "results"), reporter: reporters,
   };
   if (format === "esm") {
-    return `import rootReporter from "playwright-msteams-reporter";\n` +
-      `import healthReporter from "playwright-msteams-reporter/dist/healthReporter.js";\n` +
-      `import captureModule from "playwright-msteams-reporter/dist/healthCapture.js";\n` +
+    return `import rootReporter from "@martymcfly9597/playwright-msteams-reporter";\n` +
+      `import healthReporter from "@martymcfly9597/playwright-msteams-reporter/dist/healthReporter.js";\n` +
+      `import captureModule from "@martymcfly9597/playwright-msteams-reporter/dist/healthCapture.js";\n` +
       `if (typeof rootReporter.default !== "function" || typeof healthReporter.default !== "function" || typeof captureModule.captureEnvSignals !== "function") throw new Error("Packed ESM imports failed");\n` +
       `export default ${JSON.stringify(config)};\n`;
   }

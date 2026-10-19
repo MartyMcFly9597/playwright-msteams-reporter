@@ -3,7 +3,6 @@ export interface EnvSignalCaptureOptions {
   /** Annotation type prefix. Defaults to `env-signal:`. */
   annotationPrefix?: string;
   /** Allowed request hosts. When omitted, uses the page host, then the project `baseURL` host, then the supplied page's first non-excluded main-frame navigation host. */
-
   includeHosts?: string[];
   /** Hosts excluded even when they are included by policy. */
   excludeHosts?: string[];
@@ -36,7 +35,7 @@ export interface EnvSignalCaptureEvent {
   /** HTTP request method, when available. */
   method?: string;
   /** Playwright resource type, when available. */
-  /** Raw, unsanitized source text supplied to classifiers; retained descriptions are sanitized afterward. */
+  resourceType?: string;
   /** Sanitized source text supplied to classifiers before retained output sanitization. */
   text?: string;
 }

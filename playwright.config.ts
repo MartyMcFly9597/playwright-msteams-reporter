@@ -24,7 +24,7 @@ const config: PlaywrightTestConfig<{}, {}> = {
         linkToResultsUrl: "https://eliostruyf.com",
         linkToResultsText: "View results",
         linkUrlOnFailure:
-          "https://github.com/playwright-community/playwright-msteams-reporter/issues",
+          "https://github.com/MartyMcFly9597/playwright-msteams-reporter/issues",
         linkTextOnFailure: "Report an issue",
         mentionOnFailure: "elio@struyfconsulting.be",
         mentionOnFailureText: "",
