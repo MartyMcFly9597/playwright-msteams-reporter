@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Health reporter: classify failures by error text. A built-in pattern flags Chromium navigation errors such as `net::ERR_NAME_NOT_RESOLVED` as `Network` / "App unreachable from this network" (environment-suspect) instead of developer review. Custom patterns load from a JSON file via `errorPatternsFile`.
+
 ## [0.3.0] - 2026-10-20
 
 - Health card: add emoji headings, run duration formatted as `1h 14m`, colored assessment/signal lines, a green "No failures" line, per-category emojis for the default categories, and a "Developer review" group for failures without actionable signals.

@@ -1,4 +1,6 @@
 import type { Suite, TestCase, TestResult } from "@playwright/test/reporter";
+import { matchErrorPatterns } from "./errorPatterns";
+import type { CompiledErrorPatterns } from "./errorPatterns";
 
 export type Assessment = "environment" | "regression" | "mixed" | "undetermined";
 
@@ -15,7 +17,7 @@ export interface HealthCategory {
 }
 interface CompiledCategory { category: HealthCategory; patterns: string[]; index: number }
 
-const defaults: HealthCategory[] = [
+export const defaultCategories: HealthCategory[] = [
   { name: "Authentication", kinds: ["sso-*", "http-auth", "auth-*"], assessment: "environment" },
   { name: "Backend and network", kinds: ["http-5xx", "net-fail"], assessment: "environment" },
   { name: "Timeout", kinds: ["test-timeout"], assessment: "undetermined" },
@@ -28,7 +30,7 @@ const compare = (left: string, right: string) => {
   return 0;
 };
 
-export function compileCategories(categories: HealthCategory[] = defaults) {
+export function compileCategories(categories: HealthCategory[] = defaultCategories) {
   if (!Array.isArray(categories) || categories.length > 100) throw new Error("Invalid health categories");
   const names = new Set<string>();
   const exactMatches = new Map<string, CompiledCategory>();
@@ -128,6 +130,7 @@ interface AggregationState {
   summary: HealthSummary;
   taxonomy: ReturnType<typeof compileCategories>;
   annotationPrefix: string;
+  errorPatterns?: CompiledErrorPatterns;
   groups: Map<string, CategoryGroup>;
   noise: Map<string, number>;
   flakyFinalKinds: Map<string, number>;
@@ -154,7 +157,10 @@ function recordNoise(kinds: string[], taxonomy: AggregationState["taxonomy"], no
   }
 }
 
-function recordUnexpected(test: TestCase, result: TestResult | undefined, kinds: string[], state: AggregationState): void {
+function recordUnexpected(test: TestCase, result: TestResult | undefined, signalKinds: string[], state: AggregationState): void {
+  const error = result?.errors?.[0];
+  const patternKinds = state.errorPatterns ? matchErrorPatterns(error?.message ?? error?.value, state.errorPatterns) : [];
+  const kinds = [...new Set([...signalKinds, ...patternKinds])].sort(compare);
   const categories = kinds.map(kind => state.taxonomy.forKind(kind));
   const assessment = assess(categories);
   state.summary.assessments[assessment] += 1;
@@ -209,7 +215,8 @@ function finalizeGroups(state: AggregationState): void {
 export function aggregateHealth(
   suite: Suite,
   taxonomy: ReturnType<typeof compileCategories>,
-  annotationPrefix = "env-signal:"
+  annotationPrefix = "env-signal:",
+  errorPatterns?: CompiledErrorPatterns
 ): HealthSummary {
   const summary: HealthSummary = {
     outcomes: { expected: 0, unexpected: 0, flaky: 0, skipped: 0 },
@@ -219,7 +226,7 @@ export function aggregateHealth(
     flakyFinalKinds: [], previousAttemptsWithSignals: 0,
   };
   const state: AggregationState = {
-    summary, taxonomy, annotationPrefix, groups: new Map(), noise: new Map(), flakyFinalKinds: new Map(),
+    summary, taxonomy, annotationPrefix, errorPatterns, groups: new Map(), noise: new Map(), flakyFinalKinds: new Map(),
   };
   for (const test of suite.allTests()) recordTest(test, state);
   finalizeGroups(state);

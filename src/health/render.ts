@@ -46,6 +46,7 @@ const categoryEmoji: Record<string, string> = {
   Timeout: "⏳",
   "Application errors": "⚠️",
   "Other signals": "❓",
+  Network: "🌐",
 };
 
 function formatDuration(ms: number): string {
