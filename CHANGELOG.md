@@ -4,12 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- Reduce environment-signal capture and health-category matching overhead while keeping correlation storage bounded and category precedence unchanged.
-- Skip reading successful webhook response bodies by default and cancel unused bodies within the delivery timeout; keep default success output quiet and failure diagnostics concise, with details available through `debug: true`.
-- Add stable `healthReporter`, `healthCapture`, and `models` package subpaths that keep build output paths internal.
+## [0.2.0] - 2026-10-20
+
+- Add stable `healthReporter`, `healthCapture`, and `models` package subpaths with TypeScript declaration mappings, keeping build output paths internal.
 
 ## [0.1.0] - 2026-10-19
 
+- Reduce environment-signal capture and health-category matching overhead while keeping correlation storage bounded and category precedence unchanged.
+- Skip reading successful webhook response bodies by default and cancel unused bodies within the delivery timeout; keep default success output quiet and failure diagnostics concise, with details available through `debug: true`.
 - Initial public release under the `@martymcfly9597/playwright-msteams-reporter` package scope.
 - Add an optional `links` array for additional Adaptive Card buttons and default the failure-link text to `View failed tests`.
 - Add an optional application-neutral test-run health reporter at `@martymcfly9597/playwright-msteams-reporter/dist/healthReporter`; it posts a separate bounded Adaptive Card after the original report when run evidence warrants it.
