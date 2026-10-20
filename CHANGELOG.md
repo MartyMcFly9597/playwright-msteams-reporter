@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 - Reduce environment-signal capture and health-category matching overhead while keeping correlation storage bounded and category precedence unchanged.
 - Skip reading successful webhook response bodies by default and cancel unused bodies within the delivery timeout; keep default success output quiet and failure diagnostics concise, with details available through `debug: true`.
+- Add stable `healthReporter`, `healthCapture`, and `models` package subpaths that keep build output paths internal.
 
 ## [0.1.0] - 2026-10-19
 

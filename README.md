@@ -144,14 +144,14 @@ The reporter supports the following configuration options:
 
 ### Optional Test Run Health Report
 
-The independent health reporter is available at the `@martymcfly9597/playwright-msteams-reporter/dist/healthReporter`
+The independent health reporter is available at the `@martymcfly9597/playwright-msteams-reporter/healthReporter`
 subpath. Register it after the original reporter so its webhook request follows
 the original summary:
 
 ```javascript
 reporter: [
   ["@martymcfly9597/playwright-msteams-reporter", { webhookType: "powerautomate" }],
-  ["@martymcfly9597/playwright-msteams-reporter/dist/healthReporter", {
+  ["@martymcfly9597/playwright-msteams-reporter/healthReporter", {
     webhookType: "powerautomate",
     webhookUrlEnv: "MSTEAMS_WEBHOOK_URL",
   }],
@@ -175,13 +175,13 @@ capture is optional and separate from reporter setup; see the helper below.
 ### Optional Environment Signal Capture
 
 The opt-in helper is available from
-`@martymcfly9597/playwright-msteams-reporter/dist/healthCapture`. It composes with the fixture
+`@martymcfly9597/playwright-msteams-reporter/healthCapture`. It composes with the fixture
 exports already used by a project; it does not replace `page`, `context`, or
 other fixtures. Each consumer creates its own capture instance and policy.
 
 ```typescript
 import { test as base } from "@playwright/test";
-import { captureEnvSignals } from "@martymcfly9597/playwright-msteams-reporter/dist/healthCapture";
+import { captureEnvSignals } from "@martymcfly9597/playwright-msteams-reporter/healthCapture";
 
 type Fixtures = { environmentEvidence: void };
 
@@ -221,7 +221,7 @@ CommonJS without replacing their existing fixture exports:
 
 ```javascript
 const { test: base } = require("@playwright/test");
-const { captureEnvSignals } = require("@martymcfly9597/playwright-msteams-reporter/dist/healthCapture");
+const { captureEnvSignals } = require("@martymcfly9597/playwright-msteams-reporter/healthCapture");
 
 exports.test = base.extend({
   environmentEvidence: async ({ page, context }, use, testInfo) => {
