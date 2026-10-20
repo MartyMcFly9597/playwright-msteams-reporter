@@ -86,6 +86,37 @@ describe("error patterns", () => {
     expect(summary.assessments.mixed).toBe(1);
   });
 
+  it("counts a noise message once per test across patterns and annotations", () => {
+    const categories: HealthCategory[] = [
+      { name: "A", kinds: ["a-kind"], noise: true },
+      { name: "B", kinds: ["b-kind"], noise: true },
+      { name: "Known", kinds: ["Shared"], noise: true },
+    ];
+    const twoCategories: ErrorPattern[] = [
+      { match: "alpha", category: "A", message: "Shared" },
+      { match: "alpha", category: "B", message: "Shared" },
+    ];
+    expect(summarize(failing("alpha"), twoCategories, categories).noise).toEqual([{ kind: "Shared", tests: 1 }]);
+    const withAnnotation = summarize(failing("alpha", [{ type: "env-signal:Shared" }]), twoCategories, categories);
+    expect(withAnnotation.noise).toEqual([{ kind: "Shared", tests: 1 }]);
+  });
+
+  it("counts a category and kind once per test while keeping all assessment evidence", () => {
+    const patterns: ErrorPattern[] = [{ match: "refused", category: "Backend and network", assessment: "environment", message: "net-fail" }];
+    const summary = summarize(failing("refused", [{ type: "env-signal:net-fail" }]), patterns);
+    expect(summary.categories).toEqual([
+      { name: "Backend and network", failed: 1, kinds: [{ kind: "net-fail", tests: 1 }] },
+    ]);
+    expect(summary.assessments.environment).toBe(1);
+  });
+
+  it("keeps both assessments for same-category, same-message patterns regardless of order", () => {
+    const alpha: ErrorPattern = { match: "alpha", category: "Service", assessment: "environment", message: "Unavailable" };
+    const beta: ErrorPattern = { match: "beta", category: "Service", assessment: "regression", message: "Unavailable" };
+    expect(summarize(failing("alpha beta"), [alpha, beta]).assessments.mixed).toBe(1);
+    expect(summarize(failing("alpha beta"), [beta, alpha]).assessments.mixed).toBe(1);
+  });
+
   it("rejects invalid patterns with a clear error", () => {
     const valid = { match: "x", category: "C", message: "m" };
     expect(() => compileErrorPatterns([{ ...valid, match: "(" }])).toThrow("index 0: match is not a valid regular expression");

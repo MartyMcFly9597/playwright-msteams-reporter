@@ -78,7 +78,7 @@ export function matchErrorPatterns(text: string | undefined, compiled: CompiledE
   const clean = text.replace(/\u001b\[[0-9;]*m/g, "");
   const matches = new Map<string, ErrorPatternMatch>();
   for (const { regex, category, assessment, message } of compiled.matchers) {
-    if (regex.test(clean)) matches.set(`${category}\u0000${message}`, { category, assessment, message });
+    if (regex.test(clean)) matches.set(`${category}\u0000${assessment}\u0000${message}`, { category, assessment, message });
   }
   return [...matches.values()];
 }

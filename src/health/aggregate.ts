@@ -160,15 +160,20 @@ function recordNoise(kinds: string[], taxonomy: AggregationState["taxonomy"], no
   }
 }
 
-function recordUnexpected(test: TestCase, result: TestResult | undefined, signalKinds: string[], state: AggregationState): void {
+function recordUnexpected(test: TestCase, result: TestResult | undefined, currentKinds: string[], state: AggregationState): void {
   const { taxonomy, noise } = state;
   const error = result?.errors?.[0];
   const matches = state.errorPatterns ? matchErrorPatterns(error?.message ?? error?.value, state.errorPatterns) : [];
-  const evidence = signalKinds.map(kind => ({ kind, category: taxonomy.forKind(kind) }));
+  const evidence = currentKinds.filter(kind => !taxonomy.forKind(kind).noise).map(kind => ({ kind, category: taxonomy.forKind(kind) }));
+  // Annotation noise is already counted by recordNoise; count each pattern noise message once per test.
+  const countedNoise = new Set(currentKinds.filter(kind => taxonomy.forKind(kind).noise));
   for (const match of matches) {
     // A pattern whose category the taxonomy marks as noise is context, not failure evidence.
     if (taxonomy.byName(match.category)?.noise) {
-      noise.set(match.message, (noise.get(match.message) ?? 0) + 1);
+      if (!countedNoise.has(match.message)) {
+        countedNoise.add(match.message);
+        noise.set(match.message, (noise.get(match.message) ?? 0) + 1);
+      }
     } else {
       evidence.push({ kind: match.message, category: { name: match.category, kinds: [], assessment: match.assessment } });
     }
@@ -178,10 +183,16 @@ function recordUnexpected(test: TestCase, result: TestResult | undefined, signal
   const assessment = assess(categories);
   state.summary.assessments[assessment] += 1;
   state.summary.failures.push({ test, result, assessment, categories: [...new Set(categories.map(category => category.name))].sort(compare) });
+  // Assessment keeps every match; display counts once per category and kind for this test.
+  const counted = new Set<string>();
   for (const { kind, category } of evidence) {
     const group = state.groups.get(category.name) ?? { tests: new Set<TestCase>(), kinds: new Map<string, number>() };
     group.tests.add(test);
-    group.kinds.set(kind, (group.kinds.get(kind) ?? 0) + 1);
+    const key = `${category.name}\u0000${kind}`;
+    if (!counted.has(key)) {
+      counted.add(key);
+      group.kinds.set(kind, (group.kinds.get(kind) ?? 0) + 1);
+    }
     state.groups.set(category.name, group);
   }
 }
@@ -208,7 +219,7 @@ function recordTest(test: TestCase, state: AggregationState): void {
     for (const kind of realKinds) state.flakyFinalKinds.set(kind, (state.flakyFinalKinds.get(kind) ?? 0) + 1);
   }
   if (result?.status === "passed" && outcome === "expected" && realKinds.length) summary.passedWithSignals += 1;
-  if (outcome === "unexpected") recordUnexpected(test, result, realKinds, state);
+  if (outcome === "unexpected") recordUnexpected(test, result, currentKinds, state);
 }
 
 function finalizeGroups(state: AggregationState): void {
