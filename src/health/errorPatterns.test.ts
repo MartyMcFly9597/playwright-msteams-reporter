@@ -2,19 +2,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Suite } from "@playwright/test/reporter";
-import { aggregateHealth, compileCategories, defaultCategories } from "./aggregate";
-import { compileErrorPatterns, defaultErrorPatterns, mergePatternCategories, readErrorPatternsFile } from "./errorPatterns";
+import { aggregateHealth, compileCategories } from "./aggregate";
+import type { HealthCategory } from "./aggregate";
+import { compileErrorPatterns, defaultErrorPatterns, readErrorPatternsFile } from "./errorPatterns";
+import type { ErrorPattern } from "./errorPatterns";
 import { buildHealthMessage } from "./render";
 
-const failing = (message: string) => ({ allTests: () => [{
+const failing = (message: string, annotations: { type: string }[] = []) => ({ allTests: () => [{
   id: "t", titlePath: () => ["t"], outcome: () => "unexpected",
-  results: [{ status: "failed", annotations: [], errors: [{ message }] }],
+  results: [{ status: "failed", annotations, errors: [{ message }] }],
 }] } as unknown as Suite);
 
-function summarize(suite: Suite, patterns = defaultErrorPatterns) {
-  const compiled = compileErrorPatterns(patterns);
-  const taxonomy = compileCategories(mergePatternCategories(defaultCategories, compiled.categories));
-  return aggregateHealth(suite, taxonomy, "env-signal:", compiled);
+function summarize(suite: Suite, patterns: ErrorPattern[] = defaultErrorPatterns, categories?: HealthCategory[]) {
+  return aggregateHealth(suite, compileCategories(categories), "env-signal:", compileErrorPatterns(patterns));
 }
 
 describe("error patterns", () => {
@@ -54,20 +54,42 @@ describe("error patterns", () => {
     expect(summarize(failing("net::ERR_NAME_NOT_RESOLVED"), patterns).assessments.environment).toBe(0);
   });
 
-  it("groups patterns into an existing category of the same name", () => {
-    const merged = mergePatternCategories(
-      [{ name: "Network", kinds: ["net-fail"], assessment: "environment" }],
-      compileErrorPatterns(defaultErrorPatterns).categories,
-    );
-    expect(merged).toHaveLength(1);
-    expect(merged[0].kinds).toEqual(["net-fail", "App unreachable from this network"]);
+  it("keeps each pattern's category and assessment, even with a shared message or category", () => {
+    const patterns: ErrorPattern[] = [
+      { match: "alpha", category: "First", assessment: "environment", message: "Unavailable" },
+      { match: "beta", category: "Second", assessment: "regression", message: "Unavailable" },
+      { match: "gamma", category: "First", assessment: "regression", message: "Other" },
+    ];
+    const beta = summarize(failing("beta"), patterns);
+    expect(beta.assessments.regression).toBe(1);
+    expect(beta.categories.map(category => category.name)).toEqual(["Second"]);
+    const gamma = summarize(failing("gamma"), patterns);
+    expect(gamma.assessments.regression).toBe(1);
+    expect(gamma.assessments.environment).toBe(0);
+  });
+
+  it("honors a pattern's assessment in a category that shares a signal category name", () => {
+    const patterns: ErrorPattern[] = [{ match: "slow", category: "Timeout", assessment: "environment", message: "Slow backend" }];
+    expect(summarize(failing("slow"), patterns).assessments.environment).toBe(1);
+  });
+
+  it("treats a pattern in a noise category as noise, not failure evidence", () => {
+    const categories: HealthCategory[] = [{ name: "Network", kinds: ["net-fail"], noise: true }];
+    const summary = summarize(failing("net::ERR_NAME_NOT_RESOLVED"), defaultErrorPatterns, categories);
+    expect(summary.categories).toEqual([]);
+    expect(summary.noise).toEqual([{ kind: "App unreachable from this network", tests: 1 }]);
+    expect(summary.failures[0].categories).toEqual([]);
+  });
+
+  it("combines a matched pattern with signal evidence", () => {
+    const summary = summarize(failing("net::ERR_NAME_NOT_RESOLVED", [{ type: "env-signal:page-error" }]));
+    expect(summary.assessments.mixed).toBe(1);
   });
 
   it("rejects invalid patterns with a clear error", () => {
     const valid = { match: "x", category: "C", message: "m" };
     expect(() => compileErrorPatterns([{ ...valid, match: "(" }])).toThrow("index 0: match is not a valid regular expression");
     expect(() => compileErrorPatterns([valid, { ...valid, category: "" }])).toThrow("index 1");
-    expect(() => compileErrorPatterns([{ ...valid, message: "a*b" }])).toThrow("message");
     expect(() => compileErrorPatterns([{ ...valid, assessment: "mixed" as never }])).toThrow("assessment");
     expect(() => readErrorPatternsFile(path.join(os.tmpdir(), "missing-patterns.json"))).toThrow("Unable to read");
   });

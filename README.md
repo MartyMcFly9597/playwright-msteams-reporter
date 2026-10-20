@@ -364,10 +364,11 @@ To replace the built-in patterns, set `errorPatternsFile` to a JSON file:
 ```
 
 `match` is a regular expression source, `assessment` is `environment`, `regression`
-or `undetermined` (default), and `message` is a short line without `*`. Patterns
-that share a `category` are grouped, and a category with the same name as a signal
-category receives the pattern messages. An invalid entry throws a configuration
-error naming its index.
+or `undetermined` (default), and `message` is a short line shown on the card. Each
+match keeps its own category and assessment. A pattern whose `category` has the same
+name as a signal category is grouped with it, and is treated as noise when that
+category is marked `noise`. An invalid entry throws a configuration error naming its
+index.
 
 Categories are ordered; the first category with a matching kind pattern wins.
 Patterns match the entire kind, case-sensitively. `*` is the only wildcard;

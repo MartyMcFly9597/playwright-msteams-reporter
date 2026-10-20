@@ -1,8 +1,8 @@
 import type { FullConfig, FullResult, Reporter, Suite, TestError } from "@playwright/test/reporter";
 import type { MsTeamsReporterOptions } from ".";
-import { aggregateHealth, compileCategories, defaultCategories } from "./health/aggregate";
+import { aggregateHealth, compileCategories } from "./health/aggregate";
 import type { HealthCategory } from "./health/aggregate";
-import { compileErrorPatterns, defaultErrorPatterns, mergePatternCategories, readErrorPatternsFile } from "./health/errorPatterns";
+import { compileErrorPatterns, defaultErrorPatterns, readErrorPatternsFile } from "./health/errorPatterns";
 import type { ErrorPattern } from "./health/errorPatterns";
 import { buildHealthMessage, sanitizeHealthText } from "./health/render";
 import type { HealthDisplayOptions } from "./health/render";
@@ -84,7 +84,7 @@ export default class HealthReporter implements Reporter {
     validateOptions(options);
     const patterns: ErrorPattern[] = options.errorPatternsFile === undefined ? defaultErrorPatterns : readErrorPatternsFile(options.errorPatternsFile);
     this.errorPatterns = compileErrorPatterns(patterns);
-    this.taxonomy = compileCategories(mergePatternCategories(options.categories ?? defaultCategories, this.errorPatterns.categories));
+    this.taxonomy = compileCategories(options.categories);
     this.options = {
       ...options,
       webhookUrl: resolveWebhookUrl(options.webhookUrl, options.webhookUrlEnv),

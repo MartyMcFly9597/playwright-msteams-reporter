@@ -1,22 +1,26 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { HealthCategory } from "./aggregate";
 
 /** Maps failure error text to a category, assessment and card message. */
 export interface ErrorPattern {
   /** Regular expression source tested against the first error of a failed test. */
   match: string;
-  /** Category name; patterns and signal categories with the same name are grouped. */
+  /** Category name; a same-named signal category groups with it, and a noise category makes the match noise. */
   category: string;
   /** Assessment for matching failures. Defaults to undetermined. */
   assessment?: "environment" | "regression" | "undetermined";
-  /** Short line shown on the card. Must not contain `*`. */
+  /** Short line shown on the card. */
   message: string;
 }
 
 export interface CompiledErrorPatterns {
-  matchers: { regex: RegExp; message: string }[];
-  categories: HealthCategory[];
+  matchers: { regex: RegExp; category: string; assessment: "environment" | "regression" | "undetermined"; message: string }[];
+}
+
+export interface ErrorPatternMatch {
+  category: string;
+  assessment: "environment" | "regression" | "undetermined";
+  message: string;
 }
 
 export const defaultErrorPatterns: ErrorPattern[] = [
@@ -37,7 +41,7 @@ function validatePattern(pattern: ErrorPattern, index: number): RegExp {
   if (typeof pattern.match !== "string" || !pattern.match || pattern.match.length > 500) throw invalid(index, "match must be a non-empty string up to 500 characters");
   if (typeof pattern.category !== "string" || !pattern.category.trim() || pattern.category.length > 120 || pattern.category === "Other signals") throw invalid(index, "category must be a non-empty string up to 120 characters and not reserved");
   if (pattern.assessment !== undefined && !["environment", "regression", "undetermined"].includes(pattern.assessment)) throw invalid(index, "assessment must be environment, regression or undetermined");
-  if (typeof pattern.message !== "string" || !pattern.message.trim() || pattern.message.length > 200 || pattern.message.includes("*")) throw invalid(index, "message must be a non-empty string up to 200 characters without `*`");
+  if (typeof pattern.message !== "string" || !pattern.message.trim() || pattern.message.length > 200) throw invalid(index, "message must be a non-empty string up to 200 characters");
   try {
     return new RegExp(pattern.match);
   } catch {
@@ -47,18 +51,13 @@ function validatePattern(pattern: ErrorPattern, index: number): RegExp {
 
 export function compileErrorPatterns(patterns: ErrorPattern[] = defaultErrorPatterns): CompiledErrorPatterns {
   if (!Array.isArray(patterns) || patterns.length > 100) throw new Error("Invalid health error patterns");
-  const byCategory = new Map<string, HealthCategory>();
-  const matchers = patterns.map((pattern, index) => {
-    const regex = validatePattern(pattern, index);
-    const existing = byCategory.get(pattern.category);
-    if (existing) {
-      if (!existing.kinds.includes(pattern.message)) existing.kinds.push(pattern.message);
-    } else {
-      byCategory.set(pattern.category, { name: pattern.category, kinds: [pattern.message], assessment: pattern.assessment ?? "undetermined" });
-    }
-    return { regex, message: pattern.message };
-  });
-  return { matchers, categories: [...byCategory.values()] };
+  const matchers = patterns.map((pattern, index) => ({
+    regex: validatePattern(pattern, index),
+    category: pattern.category,
+    assessment: pattern.assessment ?? "undetermined",
+    message: pattern.message,
+  }));
+  return { matchers };
 }
 
 /** Reads `{ "errorPatterns": [...] }` from a JSON file. */
@@ -74,19 +73,12 @@ export function readErrorPatternsFile(file: string): ErrorPattern[] {
   return parsed.errorPatterns;
 }
 
-/** Adds pattern categories to a taxonomy; a same-named category receives the pattern kinds. */
-export function mergePatternCategories(categories: HealthCategory[], patternCategories: HealthCategory[]): HealthCategory[] {
-  const merged = categories.map(category => ({ ...category, kinds: [...category.kinds] }));
-  for (const extra of patternCategories) {
-    const existing = merged.find(category => category.name === extra.name);
-    if (existing) existing.kinds.push(...extra.kinds);
-    else merged.push(extra);
-  }
-  return merged;
-}
-
-export function matchErrorPatterns(text: string | undefined, compiled: CompiledErrorPatterns): string[] {
+export function matchErrorPatterns(text: string | undefined, compiled: CompiledErrorPatterns): ErrorPatternMatch[] {
   if (!text) return [];
   const clean = text.replace(/\u001b\[[0-9;]*m/g, "");
-  return [...new Set(compiled.matchers.filter(({ regex }) => regex.test(clean)).map(({ message }) => message))];
+  const matches = new Map<string, ErrorPatternMatch>();
+  for (const { regex, category, assessment, message } of compiled.matchers) {
+    if (regex.test(clean)) matches.set(`${category}\u0000${message}`, { category, assessment, message });
+  }
+  return [...matches.values()];
 }

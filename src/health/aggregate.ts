@@ -57,6 +57,9 @@ export function compileCategories(categories: HealthCategory[] = defaultCategori
   });
   const resolutions = new Map<string, HealthCategory>();
   return {
+    byName(name: string): HealthCategory | undefined {
+      return categories.find(category => category.name === name);
+    },
     forKind(kind: string): HealthCategory {
       const cached = resolutions.get(kind);
       if (cached) return cached;
@@ -158,19 +161,28 @@ function recordNoise(kinds: string[], taxonomy: AggregationState["taxonomy"], no
 }
 
 function recordUnexpected(test: TestCase, result: TestResult | undefined, signalKinds: string[], state: AggregationState): void {
+  const { taxonomy, noise } = state;
   const error = result?.errors?.[0];
-  const patternKinds = state.errorPatterns ? matchErrorPatterns(error?.message ?? error?.value, state.errorPatterns) : [];
-  const kinds = [...new Set([...signalKinds, ...patternKinds])].sort(compare);
-  const categories = kinds.map(kind => state.taxonomy.forKind(kind));
+  const matches = state.errorPatterns ? matchErrorPatterns(error?.message ?? error?.value, state.errorPatterns) : [];
+  const evidence = signalKinds.map(kind => ({ kind, category: taxonomy.forKind(kind) }));
+  for (const match of matches) {
+    // A pattern whose category the taxonomy marks as noise is context, not failure evidence.
+    if (taxonomy.byName(match.category)?.noise) {
+      noise.set(match.message, (noise.get(match.message) ?? 0) + 1);
+    } else {
+      evidence.push({ kind: match.message, category: { name: match.category, kinds: [], assessment: match.assessment } });
+    }
+  }
+  evidence.sort((left, right) => compare(left.kind, right.kind));
+  const categories = evidence.map(item => item.category);
   const assessment = assess(categories);
   state.summary.assessments[assessment] += 1;
   state.summary.failures.push({ test, result, assessment, categories: [...new Set(categories.map(category => category.name))].sort(compare) });
-  for (const kind of kinds) {
-    const name = state.taxonomy.forKind(kind).name;
-    const group = state.groups.get(name) ?? { tests: new Set<TestCase>(), kinds: new Map<string, number>() };
+  for (const { kind, category } of evidence) {
+    const group = state.groups.get(category.name) ?? { tests: new Set<TestCase>(), kinds: new Map<string, number>() };
     group.tests.add(test);
     group.kinds.set(kind, (group.kinds.get(kind) ?? 0) + 1);
-    state.groups.set(name, group);
+    state.groups.set(category.name, group);
   }
 }
 
