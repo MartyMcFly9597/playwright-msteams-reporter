@@ -1,6 +1,6 @@
 {
   "name": "@martymcfly9597/playwright-msteams-reporter",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Microsoft Teams reporter for Playwright which allows you to send notifications about the status of your E2E tests.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
