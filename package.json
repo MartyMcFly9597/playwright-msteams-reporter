@@ -15,10 +15,6 @@
     "type": "git",
     "url": "git+https://github.com/MartyMcFly9597/playwright-msteams-reporter.git"
   },
-  "funding": {
-    "type": "github",
-    "url": "https://github.com/sponsors/estruyf"
-  },
   "keywords": [
     "playwright",
     "msteams",
@@ -27,7 +23,13 @@
     "e2e",
     "testing"
   ],
-  "author": "Elio Struyf <elio@struyfconsulting.be>",
+  "author": "MartyMcFly9597",
+  "contributors": [
+    {
+      "name": "Elio Struyf",
+      "url": "https://github.com/estruyf"
+    }
+  ],
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/MartyMcFly9597/playwright-msteams-reporter/issues"
