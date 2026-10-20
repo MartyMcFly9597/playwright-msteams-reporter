@@ -286,6 +286,37 @@ describe("health card rendering", () => {
       expect.objectContaining({ text: "🤷 Developer review (no actionable environment signal): 1 failed tests", color: "attention" }));
   });
 
+  it("places the developer-review heading only before uncategorized failures, within maxTests", () => {
+    const suite = { allTests: () => [
+      { id: "a", titlePath: () => ["signalled"], outcome: () => "unexpected",
+        results: [{ status: "failed", annotations: [{ type: "env-signal:net-fail" }], errors: [] }] },
+      { id: "b", titlePath: () => ["plain"], outcome: () => "unexpected",
+        results: [{ status: "failed", annotations: [], errors: [] }] },
+    ] } as unknown as Suite;
+    const summary = aggregateHealth(suite, compileCategories());
+    const context = { status: "failed" as const, duration: 0, errors: [] };
+    const texts = (maxTests: number) => (JSON.parse(buildHealthMessage(summary, { maxTests }, context))
+      .attachments[0].content.body as { text: string }[]).map(entry => entry.text);
+    const both = texts(5);
+    expect(both.findIndex(text => text === "signalled")).toBeLessThan(both.findIndex(text => text.startsWith("🤷")));
+    expect(both.findIndex(text => text.startsWith("🤷"))).toBeLessThan(both.findIndex(text => text === "plain"));
+    const capped = texts(1);
+    expect(capped).toContain("signalled");
+    expect(capped).not.toContain("plain");
+    expect(capped.some(text => text.startsWith("🤷"))).toBe(true);
+  });
+
+  it("does not decorate custom category names that match Object prototype members", () => {
+    const suite = { allTests: () => [{
+      id: "a", titlePath: () => ["a"], outcome: () => "unexpected",
+      results: [{ status: "failed", annotations: [{ type: "env-signal:custom" }], errors: [] }],
+    }] } as unknown as Suite;
+    const summary = aggregateHealth(suite, compileCategories([{ name: "constructor", kinds: ["custom"] }]));
+    const texts = (JSON.parse(buildHealthMessage(summary, {}, { status: "failed", duration: 0, errors: [] }))
+      .attachments[0].content.body as { text: string }[]).map(entry => entry.text);
+    expect(texts).toContain("constructor: 1 failed tests");
+  });
+
   it("renders a green no-failures line", () => {
     const summary = aggregateHealth({ allTests: () => [] } as unknown as Suite, compileCategories());
     const body = JSON.parse(buildHealthMessage(summary, {}, { status: "passed", duration: 0, errors: [] }))

@@ -246,7 +246,7 @@ function categoryDetails(summary: HealthSummary, clean: (value: string, limit?: 
     [textEntry("Failure evidence categories may overlap; each failure has one assessment.")],
   ] : [];
   for (const category of summary.categories) {
-    const emoji = categoryEmoji[category.name];
+    const emoji = Object.prototype.hasOwnProperty.call(categoryEmoji, category.name) ? categoryEmoji[category.name] : undefined;
     details.push([textEntry(`${emoji ? `${emoji} ` : ""}${clean(category.name, 120)}: ${category.failed} failed tests`, true)]);
     for (const kind of category.kinds) details.push([textEntry(`${clean(kind.kind, 120)}: ${kind.tests} tests`)]);
   }
@@ -268,18 +268,24 @@ function failureDetail(failure: HealthSummary["failures"][number], options: Heal
   return entries;
 }
 
-function developerReviewHeading(summary: HealthSummary): TextEntry[][] {
+function developerReviewHeading(summary: HealthSummary): TextEntry {
   const count = summary.failures.filter(failure => failure.categories.length === 0).length;
-  return count ? [[textEntry(`🤷 Developer review (no actionable environment signal): ${count} failed tests`, true, "attention")]] : [];
+  return textEntry(`🤷 Developer review (no actionable environment signal): ${count} failed tests`, true, "attention");
 }
 
 function failureDetails(summary: HealthSummary, options: HealthDisplayOptions, clean: (value: string, limit?: number) => string): TextEntry[][] {
   const details = categoryDetails(summary, clean);
+  const shown = summary.failures.slice(0, options.maxTests ?? 5);
+  const signalled = shown.filter(failure => failure.categories.length > 0);
+  const unsignalled = shown.filter(failure => failure.categories.length === 0);
   details.push(
     ...summary.noise.map(noise => [textEntry(`ℹ️ ${clean(noise.kind, 120)}: ambient noise on ${noise.tests} tests; not a failure cause.`)]),
-    ...developerReviewHeading(summary),
-    ...summary.failures.slice(0, options.maxTests ?? 5).map(failure => failureDetail(failure, options, clean))
+    ...signalled.map(failure => failureDetail(failure, options, clean))
   );
+  if (summary.failures.some(failure => failure.categories.length === 0)) {
+    const [firstUnsignalled, ...rest] = unsignalled.map(failure => failureDetail(failure, options, clean));
+    details.push([developerReviewHeading(summary), ...(firstUnsignalled ?? [])], ...rest);
+  }
   return details;
 }
 
