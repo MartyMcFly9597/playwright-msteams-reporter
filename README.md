@@ -436,7 +436,7 @@ You can mention users by providing their email addresses when using the Power Au
 
 ```javascript
 {
-  mentionOnFailure: "mail1@elio.dev,mail2@elio.dev",
+  mentionOnFailure: "qa1@example.com,qa2@example.com",
   mentionOnFailureText: "{mentions} check those failed tests!"
 }
 ```
@@ -447,7 +447,7 @@ The format can be either the full name and email (`"Full name <email>"`) or just
 
 ```javascript
 {
-  mentionOnFailure: "Elio Struyf <mail@elio.dev>,mail@elio.dev",
+  mentionOnFailure: "QA Team <qa@example.com>,qa@example.com",
   mentionOnFailureText: "{mentions} check those failed tests!"
 }
 ```
