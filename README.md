@@ -61,21 +61,18 @@ npm install @martymcfly9597/playwright-msteams-reporter
 
 ## Usage
 
-You can configure the reporter by adding it to the `playwright.config.js` file:
+You can configure the reporter by adding it to `playwright.config.ts`:
 
-```javascript
+```typescript
 import { defineConfig } from '@playwright/test';
 import type { MsTeamsReporterOptions } from "@martymcfly9597/playwright-msteams-reporter";
 
 export default defineConfig({
   reporter: [
     ['list'],
-    [
-      '@martymcfly9597/playwright-msteams-reporter',
-      <MsTeamsReporterOptions>{
-        webhookType: "powerautomate", // or "msteams"
-      }
-    ]
+    ['@martymcfly9597/playwright-msteams-reporter', {
+      webhookType: "powerautomate", // or "msteams"
+    } satisfies MsTeamsReporterOptions]
   ],
 });
 ```
@@ -520,7 +517,7 @@ Make sure to provide the environment variables in your Azure DevOps pipeline:
 
 ### Combine the reporter with the Playwright Azure Reporter
 
-You can combine the Microsoft Teams reporter with the Playwright Azure Reporter to link to create a link to the test plan results on Azure DevOps. The following example shows how you can combine both reporters:
+You can combine the Microsoft Teams reporter with the Playwright Azure Reporter to link to the test plan results on Azure DevOps. The following example shows how you can combine both reporters:
 
 ```typescript
 import { defineConfig } from "@playwright/test";
@@ -533,14 +530,14 @@ export default defineConfig({
     // First define the Azure reporter
     [
       "@alex_neo/playwright-azure-reporter",
-      <AzureReporterOptions>{
+      {
         ...
       },
     ],
     // Then define the Microsoft Teams reporter
     [
       '@martymcfly9597/playwright-msteams-reporter',
-      <MsTeamsReporterOptions>{
+      {
         webhookUrl: "<webhookUrl>",
         // Instead of providing the URL directly, you need to provide a function that returns the URL.
         // The AZURE_PW_TEST_RUN_ID variable is only available once the Azure reporter has run.

@@ -4,13 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-19
+
+- Initial public release under the `@martymcfly9597/playwright-msteams-reporter` package scope.
 - Add an optional `links` array for additional Adaptive Card buttons and default the failure-link text to `View failed tests`.
 - Add an optional application-neutral test-run health reporter at `@martymcfly9597/playwright-msteams-reporter/dist/healthReporter`; it posts a separate bounded Adaptive Card after the original report when run evidence warrants it.
 - Bound webhook requests and response-body reads with `webhookTimeoutMs` (default 10 seconds); report redacted transport failures without changing test outcomes or retrying delivery.
 - Resolve omitted or explicitly `undefined` webhook destinations from `MSTEAMS_WEBHOOK_URL` or a custom `webhookUrlEnv` without modifying reporter configuration; an explicit empty URL disables delivery. Config expressions evaluating to `undefined` now use this fallback.
 - Redact configured webhook URLs and their canonical URL forms from reporter logs without changing delivery.
 - Require `debug: true` for diagnostic dumps; `NODE_ENV=development` alone no longer enables them.
-- Add an optional `dist/healthCapture` fixture helper for bounded, sanitized browser evidence and consumer-owned environment-signal policies; existing reporters and fixture exports remain unchanged.
+- Add an optional `@martymcfly9597/playwright-msteams-reporter/dist/healthCapture` fixture helper for bounded, sanitized browser evidence and consumer-owned environment-signal policies; existing reporters and fixture exports remain unchanged.
 - Add `npm run test:package` to verify packed CJS/ESM/TypeScript consumers, local-only sequential delivery, and the Playwright 1.45/current compatibility boundary.
 
 ## [0.0.13]

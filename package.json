@@ -1,14 +1,15 @@
 {
   "name": "@martymcfly9597/playwright-msteams-reporter",
-  "version": "0.0.13",
+  "version": "0.1.0",
   "description": "Microsoft Teams reporter for Playwright which allows you to send notifications about the status of your E2E tests.",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/clean-dist.cjs && tsc",
+    "prepack": "npm run build",
     "watch": "tsc -w",
     "test": "NODE_ENV=development npx playwright test",
     "test:jest": "jest --coverage --coverageDirectory=../coverage",
-    "test:package": "npm run build && node scripts/test-packaged-artifact.cjs"
+    "test:package": "node scripts/test-packaged-artifact.cjs"
   },
   "repository": {
     "type": "git",
@@ -33,7 +34,8 @@
   },
   "homepage": "https://github.com/MartyMcFly9597/playwright-msteams-reporter#readme",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

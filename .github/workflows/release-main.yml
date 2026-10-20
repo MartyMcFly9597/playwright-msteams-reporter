@@ -21,9 +21,13 @@ jobs:
       - name: Run tests
         run: npm run test:jest
 
+      - name: Verify packed package
+        run: npm run test:package
+
   release:
     runs-on: ubuntu-latest
     needs: test
+    if: github.event_name != 'release' || github.event.release.prerelease == false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -37,6 +41,13 @@ jobs:
 
       - name: Run build
         run: npm run build
+
+      - name: Verify release tag matches package version
+        if: github.event_name == 'release'
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          test "$TAG_VERSION" = "$PACKAGE_VERSION"
 
       - name: Publish release
         run: npm publish

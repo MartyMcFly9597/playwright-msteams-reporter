@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const { execFile, execFileSync } = require("node:child_process");
 const { createServer } = require("node:http");
-const { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
+const { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, rmdirSync, writeFileSync } = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { promisify } = require("node:util");
@@ -254,6 +254,47 @@ async function verifyTypes(consumer) {
   });
 }
 
+async function verifyNodeEsmImports(consumer) {
+  const packageName = "@martymcfly9597/playwright-msteams-reporter";
+  const source = [
+    `import reporter from "${packageName}";`,
+    `import health from "${packageName}/dist/healthReporter.js";`,
+    `import capture from "${packageName}/dist/healthCapture.js";`,
+    'if (typeof reporter.default !== "function" || typeof health.default !== "function" || typeof capture.captureEnvSignals !== "function") process.exit(1);',
+  ].join("\n");
+  await execute(process.execPath, ["--input-type=module", "-e", source], {
+    cwd: consumer, env: childEnvironment(), timeout: 30000, windowsHide: true, maxBuffer: 2 * 1024 * 1024,
+  });
+}
+
+function seedGeneratedArtifactFixtures() {
+  const fixtures = [];
+  const cleanup = () => {
+    for (const fixture of fixtures.reverse()) {
+      rmSync(fixture.directory, { recursive: true, force: true, maxRetries: 3 });
+      if (!fixture.parentExisted) {
+        try { rmdirSync(fixture.parent); } catch (error) {
+          if (error.code !== "ENOENT" && error.code !== "ENOTEMPTY" && error.code !== "EEXIST") throw error;
+        }
+      }
+    }
+  };
+  try {
+    for (const name of ["playwright-report", "test-results", "blob-report"]) {
+      const parent = path.join(root, name);
+      const parentExisted = existsSync(parent);
+      mkdirSync(parent, { recursive: true });
+      const directory = mkdtempSync(path.join(parent, "npm-pack-gate-"));
+      fixtures.push({ parent, parentExisted, directory });
+      writeFileSync(path.join(directory, "artifact.txt"), "generated artifact sentinel");
+    }
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+  return cleanup;
+}
+
 async function main() {
   const directory = mkdtempSync(path.join(os.tmpdir(), "playwright-reporter-pack-"));
   const receiver = createReceiver();
@@ -266,9 +307,15 @@ async function main() {
       "@types:registry=https://registry.npmjs.org/",
       "",
     ].join("\n"));
-    const packOutput = execFileSync(process.execPath, [npmCli, "pack", "--json", "--pack-destination", directory], {
-      cwd: root, encoding: "utf8", timeout: 30000, windowsHide: true, maxBuffer: 2 * 1024 * 1024,
-    });
+    const cleanupPackFixtures = seedGeneratedArtifactFixtures();
+    let packOutput;
+    try {
+      packOutput = execFileSync(process.execPath, [npmCli, "pack", "--json", "--pack-destination", directory], {
+        cwd: root, encoding: "utf8", timeout: 120000, windowsHide: true, maxBuffer: 2 * 1024 * 1024,
+      });
+    } finally {
+      cleanupPackFixtures();
+    }
     const [packed] = JSON.parse(packOutput);
     const tarball = path.join(directory, packed.filename);
     const files = new Set(packed.files.map(file => file.path));
@@ -277,6 +324,12 @@ async function main() {
     }
     assert(!Object.hasOwn(require(path.join(root, "package.json")), "exports"), "Do not add an exports map that blocks existing deep imports");
     assert(!packed.files.some(file => /\.test\.(?:js|d\.ts)$/.test(file.path)), "Packed artifact must not contain compiled tests");
+    const allowedRootFiles = new Set(["package.json", "README.md", "CHANGELOG.md", "LICENSE"]);
+    const unexpectedFiles = packed.files.filter(file =>
+      !allowedRootFiles.has(file.path) && !/^dist\/.+\.(?:js|d\.ts)$/.test(file.path)
+    );
+    assert.deepEqual(unexpectedFiles, [], "Packed artifact may contain only package metadata/docs/license and runtime/declaration files under dist");
+    assert(!packed.files.some(file => /(?:^|\/)(?:playwright-report|test-results|blob-report)(?:\/|$)/.test(file.path)), "Packed artifact must not contain generated Playwright reports, blobs, or test results");
 
     const currentConsumer = path.join(directory, "consumer-current");
     const floorConsumer = path.join(directory, "consumer-floor");
@@ -290,6 +343,7 @@ async function main() {
     ]);
     const installationFailure = installations.find(result => result.status === "rejected");
     if (installationFailure) throw installationFailure.reason;
+    await verifyNodeEsmImports(currentConsumer);
     await verifyTypes(currentConsumer);
     const receiverUrl = await receiver.listen();
 

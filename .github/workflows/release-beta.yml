@@ -21,6 +21,9 @@ jobs:
       - name: Run tests
         run: npm run test:jest
 
+      - name: Verify packed package
+        run: npm run test:package
+
   release:
     runs-on: ubuntu-latest
     needs: test

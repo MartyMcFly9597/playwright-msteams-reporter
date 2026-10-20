@@ -36,7 +36,7 @@ export interface EnvSignalCaptureEvent {
   method?: string;
   /** Playwright resource type, when available. */
   resourceType?: string;
-  /** Sanitized source text supplied to classifiers before retained output sanitization. */
+  /** Raw source text supplied to classifiers; retained descriptions are sanitized before output. */
   text?: string;
 }
 
