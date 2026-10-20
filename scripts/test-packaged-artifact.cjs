@@ -107,10 +107,13 @@ function writeConsumerFiles(directory) {
 const { EventEmitter } = require("node:events");
 const { expect, test: base } = require("@playwright/test");
 const rootReporter = require("@martymcfly9597/playwright-msteams-reporter");
-const healthReporter = require("@martymcfly9597/playwright-msteams-reporter/dist/healthReporter");
-require("@martymcfly9597/playwright-msteams-reporter/dist/models");
-const { captureEnvSignals } = require("@martymcfly9597/playwright-msteams-reporter/dist/healthCapture");
-if (typeof rootReporter.default !== "function" || typeof healthReporter.default !== "function") throw new Error("Packed CommonJS reporter entry point failed");
+const healthReporter = require("@martymcfly9597/playwright-msteams-reporter/healthReporter");
+const models = require("@martymcfly9597/playwright-msteams-reporter/models");
+const { captureEnvSignals } = require("@martymcfly9597/playwright-msteams-reporter/healthCapture");
+if (typeof rootReporter.default !== "function" || typeof healthReporter.default !== "function" ||
+  typeof captureEnvSignals !== "function" || typeof models !== "object") {
+  throw new Error("Packed CommonJS package entry points failed");
+}
 const existing = base.extend({ existingFixture: async ({}, use) => use("preserved") });
 const test = existing.extend({
   environmentEvidence: async ({}, use, testInfo) => {
@@ -129,8 +132,8 @@ test("packed CommonJS reporter and fixture", async ({ existingFixture, environme
 `);
   writeFileSync(path.join(tests, "types.spec.ts"), `
 import { expect, test } from "@playwright/test";
-import { captureEnvSignals, type EnvSignalCaptureOptions } from "@martymcfly9597/playwright-msteams-reporter/dist/healthCapture";
-import type { HealthReporterOptions } from "@martymcfly9597/playwright-msteams-reporter/dist/healthReporter";
+import { captureEnvSignals, type EnvSignalCaptureOptions } from "@martymcfly9597/playwright-msteams-reporter/healthCapture";
+import type { HealthReporterOptions } from "@martymcfly9597/playwright-msteams-reporter/healthReporter";
 const captureOptions: EnvSignalCaptureOptions = { includeHosts: ["app.acme.example"], retainOnPass: true };
 const reporterOptions: HealthReporterOptions = { webhookUrlEnv: "PACKED_WEBHOOK", quiet: true };
 test("packed TypeScript declarations resolve", async () => {
@@ -155,8 +158,8 @@ for (let index = 0; index < 12; index += 1) {
 `);
   writeFileSync(path.join(tests, "types-consumer.ts"), `
 import type { MsTeamsReporterOptions } from "@martymcfly9597/playwright-msteams-reporter";
-import type { EnvSignalCaptureOptions } from "@martymcfly9597/playwright-msteams-reporter/dist/healthCapture";
-import type { HealthReporterOptions } from "@martymcfly9597/playwright-msteams-reporter/dist/healthReporter";
+import type { EnvSignalCaptureOptions } from "@martymcfly9597/playwright-msteams-reporter/healthCapture";
+import type { HealthReporterOptions } from "@martymcfly9597/playwright-msteams-reporter/healthReporter";
 const original: MsTeamsReporterOptions = { webhookUrlEnv: "PACKED_WEBHOOK", webhookType: "msteams" };
 const health: HealthReporterOptions = { webhookUrlEnv: "PACKED_WEBHOOK", webhookType: "powerautomate" };
 const capture: EnvSignalCaptureOptions = { includeHosts: ["app.acme.example"] };
@@ -188,8 +191,8 @@ function configSource({ directory, format, webhookType, includeHealth, includeTy
   };
   if (format === "esm") {
     return `import rootReporter from "@martymcfly9597/playwright-msteams-reporter";\n` +
-      `import healthReporter from "@martymcfly9597/playwright-msteams-reporter/dist/healthReporter.js";\n` +
-      `import captureModule from "@martymcfly9597/playwright-msteams-reporter/dist/healthCapture.js";\n` +
+      `import healthReporter from "@martymcfly9597/playwright-msteams-reporter/healthReporter";\n` +
+      `import captureModule from "@martymcfly9597/playwright-msteams-reporter/healthCapture";\n` +
       `if (typeof rootReporter.default !== "function" || typeof healthReporter.default !== "function" || typeof captureModule.captureEnvSignals !== "function") throw new Error("Packed ESM imports failed");\n` +
       `export default ${JSON.stringify(config)};\n`;
   }
@@ -258,9 +261,10 @@ async function verifyNodeEsmImports(consumer) {
   const packageName = "@martymcfly9597/playwright-msteams-reporter";
   const source = [
     `import reporter from "${packageName}";`,
-    `import health from "${packageName}/dist/healthReporter.js";`,
-    `import capture from "${packageName}/dist/healthCapture.js";`,
-    'if (typeof reporter.default !== "function" || typeof health.default !== "function" || typeof capture.captureEnvSignals !== "function") process.exit(1);',
+    `import health from "${packageName}/healthReporter";`,
+    `import capture from "${packageName}/healthCapture";`,
+    `import models from "${packageName}/models";`,
+    'if (typeof reporter.default !== "function" || typeof health.default !== "function" || typeof capture.captureEnvSignals !== "function" || typeof models !== "object") process.exit(1);',
   ].join("\n");
   await execute(process.execPath, ["--input-type=module", "-e", source], {
     cwd: consumer, env: childEnvironment(), timeout: 30000, windowsHide: true, maxBuffer: 2 * 1024 * 1024,
@@ -322,7 +326,12 @@ async function main() {
     for (const file of ["dist/index.js", "dist/index.d.ts", "dist/healthReporter.js", "dist/healthReporter.d.ts", "dist/healthCapture.js", "dist/healthCapture.d.ts", "dist/models/index.js"]) {
       assert(files.has(file), `Packed artifact is missing ${file}`);
     }
-    assert(!Object.hasOwn(require(path.join(root, "package.json")), "exports"), "Do not add an exports map that blocks existing deep imports");
+    const packageExports = require(path.join(root, "package.json")).exports;
+    assert(packageExports, "Package must declare its public exports");
+    for (const subpath of [".", "./healthReporter", "./healthCapture", "./models"]) {
+      assert(Object.hasOwn(packageExports, subpath), `Package exports are missing ${subpath}`);
+    }
+    assert(!Object.keys(packageExports).some(subpath => subpath.startsWith("./dist/")), "Build output paths must not be public package exports");
     assert(!packed.files.some(file => /\.test\.(?:js|d\.ts)$/.test(file.path)), "Packed artifact must not contain compiled tests");
     const allowedRootFiles = new Set(["package.json", "README.md", "CHANGELOG.md", "LICENSE"]);
     const unexpectedFiles = packed.files.filter(file =>

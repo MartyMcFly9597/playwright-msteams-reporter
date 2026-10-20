@@ -3,6 +3,29 @@
   "version": "0.1.0",
   "description": "Microsoft Teams reporter for Playwright which allows you to send notifications about the status of your E2E tests.",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./healthReporter": {
+      "types": "./dist/healthReporter.d.ts",
+      "require": "./dist/healthReporter.js",
+      "default": "./dist/healthReporter.js"
+    },
+    "./healthCapture": {
+      "types": "./dist/healthCapture.d.ts",
+      "require": "./dist/healthCapture.js",
+      "default": "./dist/healthCapture.js"
+    },
+    "./models": {
+      "types": "./dist/models/index.d.ts",
+      "require": "./dist/models/index.js",
+      "default": "./dist/models/index.js"
+    }
+  },
   "scripts": {
     "build": "node scripts/clean-dist.cjs && tsc",
     "prepack": "npm run build",
