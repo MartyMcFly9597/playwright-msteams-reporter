@@ -37,6 +37,25 @@ interface TextEntry {
   wrap: true;
   weight?: "Bolder";
   fontType?: "Monospace";
+  color?: "attention" | "warning" | "good";
+}
+
+const categoryEmoji: Record<string, string> = {
+  Authentication: "🔐",
+  "Backend and network": "📡",
+  Timeout: "⏳",
+  "Application errors": "⚠️",
+  "Other signals": "❓",
+};
+
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
 }
 
 const sensitiveFields = [
@@ -203,8 +222,8 @@ export function sanitizeHealthText(
   return escapeMarkdownText ? escapeMarkdown(clipped) : clipped;
 }
 
-function textEntry(text: string, bold = false): TextEntry {
-  return { type: "TextBlock", text, wrap: true, ...(bold ? { weight: "Bolder" as const } : {}) };
+function textEntry(text: string, bold = false, color?: TextEntry["color"]): TextEntry {
+  return { type: "TextBlock", text, wrap: true, ...(bold ? { weight: "Bolder" as const } : {}), ...(color ? { color } : {}) };
 }
 
 function addResultsAction(options: HealthDisplayOptions, webhookUrl: string | undefined, clean: (value: string, limit?: number, escapeMarkdownText?: boolean) => string) {
@@ -227,7 +246,8 @@ function categoryDetails(summary: HealthSummary, clean: (value: string, limit?: 
     [textEntry("Failure evidence categories may overlap; each failure has one assessment.")],
   ] : [];
   for (const category of summary.categories) {
-    details.push([textEntry(`${clean(category.name, 120)}: ${category.failed} failed tests`, true)]);
+    const emoji = categoryEmoji[category.name];
+    details.push([textEntry(`${emoji ? `${emoji} ` : ""}${clean(category.name, 120)}: ${category.failed} failed tests`, true)]);
     for (const kind of category.kinds) details.push([textEntry(`${clean(kind.kind, 120)}: ${kind.tests} tests`)]);
   }
   return details;
@@ -248,10 +268,16 @@ function failureDetail(failure: HealthSummary["failures"][number], options: Heal
   return entries;
 }
 
+function developerReviewHeading(summary: HealthSummary): TextEntry[][] {
+  const count = summary.failures.filter(failure => failure.categories.length === 0).length;
+  return count ? [[textEntry(`🤷 Developer review (no actionable environment signal): ${count} failed tests`, true, "attention")]] : [];
+}
+
 function failureDetails(summary: HealthSummary, options: HealthDisplayOptions, clean: (value: string, limit?: number) => string): TextEntry[][] {
   const details = categoryDetails(summary, clean);
   details.push(
-    ...summary.noise.map(noise => [textEntry(`${clean(noise.kind, 120)}: ambient noise on ${noise.tests} tests; not a failure cause.`)]),
+    ...summary.noise.map(noise => [textEntry(`ℹ️ ${clean(noise.kind, 120)}: ambient noise on ${noise.tests} tests; not a failure cause.`)]),
+    ...developerReviewHeading(summary),
     ...summary.failures.slice(0, options.maxTests ?? 5).map(failure => failureDetail(failure, options, clean))
   );
   return details;
@@ -259,22 +285,28 @@ function failureDetails(summary: HealthSummary, options: HealthDisplayOptions, c
 
 function flakyFinalSignalDetails(summary: HealthSummary, clean: (value: string, limit?: number) => string): TextEntry[][] {
   if (!summary.flakyWithFinalSignals) return [];
-  return summary.flakyFinalKinds.map(({ kind, tests }) => [textEntry(`${clean(kind, 120)}: final-attempt signal on ${tests} flaky tests; recovery not established.`)]);
+  return summary.flakyFinalKinds.map(({ kind, tests }) => [textEntry(`🟡 ${clean(kind, 120)}: final-attempt signal on ${tests} flaky tests; recovery not established.`, false, "warning")]);
 }
 
 function baseEntries(summary: HealthSummary, options: HealthDisplayOptions, context: HealthRunContext, clean: (value: string, limit?: number) => string): TextEntry[] {
   const title = [options.environment, options.title ?? "Test Run Health"].filter(Boolean).join(" - ");
   const entries = [
-    textEntry(clean(title, 160), true),
-    textEntry(`${summary.outcomes.unexpected} failed; ${summary.outcomes.expected} expected; ${summary.outcomes.flaky} flaky; ${summary.outcomes.skipped} skipped. Run: ${context.status}; ${Math.round(context.duration / 1000)}s.`),
-    textEntry(`Evidence assessment (best guess): ${summary.assessments.environment} environment-suspect; ${summary.assessments.regression} regression-suspect; ${summary.assessments.mixed} mixed; ${summary.assessments.undetermined} Cause undetermined / developer review.`),
+    textEntry(`🩺 ${clean(title, 160)}`, true),
+    textEntry(`⏱ ${summary.outcomes.unexpected} failed; ${summary.outcomes.expected} expected; ${summary.outcomes.flaky} flaky; ${summary.outcomes.skipped} skipped. Run: ${context.status}; ${formatDuration(context.duration)}.`),
   ];
+  if (summary.outcomes.unexpected === 0) {
+    entries.push(textEntry("✅ No failures.", false, "good"));
+  } else {
+    const { environment, regression, mixed, undetermined } = summary.assessments;
+    const color = environment > 0 && regression + mixed + undetermined === 0 ? "warning" : "attention";
+    entries.push(textEntry(`🧭 Evidence assessment (best guess): ${environment} environment-suspect; ${regression} regression-suspect; ${mixed} mixed; ${undetermined} Cause undetermined / developer review.`, false, color));
+  }
   if (summary.unavailable) entries.push(textEntry(`Final signal evidence unavailable or unsupported on ${summary.unavailable} tests. No cause inferred.`));
   if (summary.passedWithSignals || summary.recoveredWithSignals || summary.previousAttemptsWithSignals) {
-    entries.push(textEntry(`Passed with signals: ${summary.passedWithSignals}. Recovered flaky tests with signal evidence: ${summary.recoveredWithSignals}. Tests with superseded-attempt signals: ${summary.previousAttemptsWithSignals}. Not included in final-failure assessments.`));
+    entries.push(textEntry(`🟡 Passed with signals: ${summary.passedWithSignals}. 🔁 Recovered flaky tests with signal evidence: ${summary.recoveredWithSignals}. Tests with superseded-attempt signals: ${summary.previousAttemptsWithSignals}. Not included in final-failure assessments.`, false, "warning"));
   }
   if (summary.flakyWithFinalSignals) {
-    entries.push(textEntry(`Flaky tests with final-attempt signals: ${summary.flakyWithFinalSignals}. Recovery not established; not included in final-failure assessments.`));
+    entries.push(textEntry(`🟡 Flaky tests with final-attempt signals: ${summary.flakyWithFinalSignals}. Recovery not established; not included in final-failure assessments.`));
   }
   return entries;
 }
