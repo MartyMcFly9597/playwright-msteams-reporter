@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Health card: add emoji headings, run duration formatted as `1h 14m`, colored assessment/signal lines, a green "No failures" line, per-category emojis for the default categories, and a "Developer review" group for failures without actionable signals.
+
 ## [0.2.0] - 2026-10-20
 
 - Add stable `healthReporter`, `healthCapture`, and `models` package subpaths with TypeScript declaration mappings, keeping build output paths internal.

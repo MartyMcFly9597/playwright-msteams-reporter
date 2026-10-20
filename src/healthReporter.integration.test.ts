@@ -46,7 +46,7 @@ it("posts the unchanged original before an optional health card without duplicat
       timeout: 20000, windowsHide: true,
     });
     const firstRun = await run();
-    expect(messages.map(message => message.title)).toEqual(["Original Results", "Test Run Health"]);
+    expect(messages.map(message => message.title)).toEqual(["Original Results", "🩺 Test Run Health"]);
     expect(firstRun.stdout.match(/ACME_OUTPUT_ONCE/g) || []).toHaveLength(1);
     expect(messages[1].body).toContain("Passed with signals: 1");
     expect(messages[1].body).not.toContain("synthetic-token");

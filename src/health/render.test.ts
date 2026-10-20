@@ -140,7 +140,7 @@ describe("health card rendering", () => {
 
   it("drops the optional results action before rejecting a minimum-budget summary", () => {
     const summary = {
-      outcomes: { expected: 1, unexpected: 0, flaky: 1, skipped: 0 },
+      outcomes: { expected: 1, unexpected: 1, flaky: 1, skipped: 0 },
       assessments: { environment: 0, regression: 0, mixed: 0, undetermined: 0 },
       categories: [], noise: [], failures: [], unavailable: 1,
       passedWithSignals: 1, recoveredWithSignals: 1, flakyWithFinalSignals: 0,
@@ -198,7 +198,7 @@ describe("health card rendering", () => {
     }, { status: "failed", duration: 0, errors: [] });
     expect(body).not.toContain("PRIVATE[");
     const card = JSON.parse(body).attachments[0].content;
-    expect(card.body[3].text).toBe("\\[redacted\\]");
+    expect(card.body[4].text).toBe("\\[redacted\\]");
     expect(card.actions[0].title).toBe("\\[redacted\\]");
   });
 
@@ -265,6 +265,63 @@ describe("health card rendering", () => {
     expect(errorEntry.fontType).toBeUndefined();
     expect(summary.assessments.undetermined).toBe(1);
     expect(JSON.stringify(card)).toContain("Cause undetermined");
+  });
+
+  it("renders emoji headings, colors and a developer-review group", () => {
+    const suite = { allTests: () => [
+      { id: "a", titlePath: () => ["a"], outcome: () => "unexpected",
+        results: [{ status: "failed", annotations: [{ type: "env-signal:net-fail" }], errors: [] }] },
+      { id: "b", titlePath: () => ["b"], outcome: () => "unexpected",
+        results: [{ status: "failed", annotations: [], errors: [] }] },
+    ] } as unknown as Suite;
+    const summary = aggregateHealth(suite, compileCategories());
+    const body = JSON.parse(buildHealthMessage(summary, { environment: "QA" }, { status: "failed", duration: 74 * 60_000, errors: [] }))
+      .attachments[0].content.body as { text: string; color?: string }[];
+    expect(body[0].text).toBe("🩺 QA - Test Run Health");
+    expect(body[1].text).toContain("⏱ 2 failed");
+    expect(body[1].text).toContain("1h 14m");
+    expect(body[2]).toEqual(expect.objectContaining({ color: "attention" }));
+    expect(body.some(entry => entry.text.startsWith("📡 Backend and network: 1 failed tests"))).toBe(true);
+    expect(body.find(entry => entry.text.startsWith("🤷"))).toEqual(
+      expect.objectContaining({ text: "🤷 Developer review (no actionable environment signal): 1 failed tests", color: "attention" }));
+  });
+
+  it("places the developer-review heading only before uncategorized failures, within maxTests", () => {
+    const suite = { allTests: () => [
+      { id: "a", titlePath: () => ["signalled"], outcome: () => "unexpected",
+        results: [{ status: "failed", annotations: [{ type: "env-signal:net-fail" }], errors: [] }] },
+      { id: "b", titlePath: () => ["plain"], outcome: () => "unexpected",
+        results: [{ status: "failed", annotations: [], errors: [] }] },
+    ] } as unknown as Suite;
+    const summary = aggregateHealth(suite, compileCategories());
+    const context = { status: "failed" as const, duration: 0, errors: [] };
+    const texts = (maxTests: number) => (JSON.parse(buildHealthMessage(summary, { maxTests }, context))
+      .attachments[0].content.body as { text: string }[]).map(entry => entry.text);
+    const both = texts(5);
+    expect(both.findIndex(text => text === "signalled")).toBeLessThan(both.findIndex(text => text.startsWith("🤷")));
+    expect(both.findIndex(text => text.startsWith("🤷"))).toBeLessThan(both.findIndex(text => text === "plain"));
+    const capped = texts(1);
+    expect(capped).toContain("signalled");
+    expect(capped).not.toContain("plain");
+    expect(capped.some(text => text.startsWith("🤷"))).toBe(true);
+  });
+
+  it("does not decorate custom category names that match Object prototype members", () => {
+    const suite = { allTests: () => [{
+      id: "a", titlePath: () => ["a"], outcome: () => "unexpected",
+      results: [{ status: "failed", annotations: [{ type: "env-signal:custom" }], errors: [] }],
+    }] } as unknown as Suite;
+    const summary = aggregateHealth(suite, compileCategories([{ name: "constructor", kinds: ["custom"] }]));
+    const texts = (JSON.parse(buildHealthMessage(summary, {}, { status: "failed", duration: 0, errors: [] }))
+      .attachments[0].content.body as { text: string }[]).map(entry => entry.text);
+    expect(texts).toContain("constructor: 1 failed tests");
+  });
+
+  it("renders a green no-failures line", () => {
+    const summary = aggregateHealth({ allTests: () => [] } as unknown as Suite, compileCategories());
+    const body = JSON.parse(buildHealthMessage(summary, {}, { status: "passed", duration: 0, errors: [] }))
+      .attachments[0].content.body as { text: string; color?: string }[];
+    expect(body[2]).toEqual(expect.objectContaining({ text: "✅ No failures.", color: "good" }));
   });
 
   it("renders Playwright value-only thrown errors", () => {
