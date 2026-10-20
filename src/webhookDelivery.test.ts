@@ -119,12 +119,31 @@ describe("bounded webhook delivery", () => {
 
   it("does not read a successful response body by default", async () => {
     const text = jest.fn();
+    const cancel = jest.fn().mockResolvedValue(undefined);
     global.fetch = jest.fn().mockResolvedValue({
-      ok: true, text,
+      ok: true, text, body: { cancel },
     });
     await processResults(suite, { webhookUrl, notifyOnSuccess: true });
     expect(text).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
     expect(console.log).not.toHaveBeenCalledWith("Message sent successfully");
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    { name: "default logging", options: {} },
+    { name: "quiet debug logging", options: { quiet: true, debug: true } },
+  ])("cancels an unused successful response body within the deadline ($name)", async ({ options }) => {
+    const cancel = jest.fn(() => new Promise<void>(() => {}));
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, body: { cancel } });
+    const pending = processResults(suite, { webhookUrl, webhookTimeoutMs: 25, notifyOnSuccess: true, ...options });
+
+    await jest.advanceTimersByTimeAsync(0);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(25);
+    await expect(pending).resolves.toBeUndefined();
+
+    expect(console.error).toHaveBeenCalledWith("Failed to send message");
     expect(jest.getTimerCount()).toBe(0);
   });
 
@@ -139,9 +158,11 @@ describe("bounded webhook delivery", () => {
 
   it("does not read or log successful responses when quiet overrides debug", async () => {
     const text = jest.fn();
-    global.fetch = jest.fn().mockResolvedValue({ ok: true, text });
+    const cancel = jest.fn().mockResolvedValue(undefined);
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, text, body: { cancel } });
     await processResults(suite, { webhookUrl, notifyOnSuccess: true, quiet: true, debug: true });
     expect(text).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
     expect(console.log).not.toHaveBeenCalledWith("Message sent successfully");
   });
 

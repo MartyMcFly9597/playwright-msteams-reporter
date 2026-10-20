@@ -18,6 +18,24 @@ function failureReason(error: unknown): string {
   }
 }
 
+async function cancelResponseBody(response: Response, signal: AbortSignal): Promise<void> {
+  if (!response.body) return;
+  let removeAbortListener = (): void => {};
+  const aborted = new Promise<void>(resolve => {
+    const onAbort = (): void => resolve();
+    if (signal.aborted) resolve();
+    else {
+      signal.addEventListener("abort", onAbort, { once: true });
+      removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+    }
+  });
+  try {
+    await Promise.race([response.body.cancel(), aborted]);
+  } finally {
+    removeAbortListener();
+  }
+}
+
 export async function sendWebhookMessage(
   webhookUrl: string,
   body: string,
@@ -37,6 +55,9 @@ export async function sendWebhookMessage(
     });
     if (!response.ok || (options.debug && !options.quiet)) {
       responseText = await response.text();
+    } else {
+      await cancelResponseBody(response, controller.signal);
+      if (controller.signal.aborted) throw new Error("Webhook delivery timed out during response cleanup");
     }
   } catch (error) {
     const reason = controller.signal.aborted
