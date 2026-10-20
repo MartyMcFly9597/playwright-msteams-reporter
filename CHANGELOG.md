@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-20
+
 - Health reporter: classify failures by error text. A built-in pattern flags Chromium navigation errors such as `net::ERR_NAME_NOT_RESOLVED` as `Network` / "App unreachable from this network" (environment-suspect) instead of developer review. Custom patterns load from a JSON file via `errorPatternsFile`.
 
 ## [0.3.0] - 2026-10-20
