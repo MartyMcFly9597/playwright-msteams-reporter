@@ -619,6 +619,33 @@ describe("environment signal browser capture lifecycle", () => {
     expect(testInfo.annotations.map(annotation => annotation.type)).toEqual(["env-signal:console-error"]);
   });
 
+  it("keeps high-volume ignored-response correlation bounded and attributable", () => {
+    const page = new FakePage();
+    const context = new FakeContext([page]);
+    const testInfo = createTestInfo();
+    const capture = captureEnvSignals({
+      page: page as unknown as Page,
+      context: context as unknown as BrowserContext,
+      testInfo,
+      options: { includeHosts: ["app.acme.example"], maxEvents: 20 },
+    });
+    const addresses = Array.from({ length: 1000 }, (_, index) => `https://app.acme.example/private/${index}`);
+    for (const address of addresses) emitResponse(context, address, 401, page);
+    page.emit("console", {
+      type: () => "error",
+      text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      location: () => ({ url: addresses[0] }),
+    });
+    page.emit("console", {
+      type: () => "error",
+      text: () => "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      location: () => ({ url: addresses.at(-1) }),
+    });
+    capture.dispose();
+
+    expect(testInfo.annotations.map(annotation => annotation.type)).toEqual(["env-signal:console-error"]);
+  });
+
   it("sanitizes descriptions before retaining annotations", () => {
     const page = new FakePage();
     const context = new FakeContext([page]);

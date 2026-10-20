@@ -13,7 +13,7 @@ export interface HealthCategory {
   /** Assessment assigned to failures with a matching signal. Defaults to undetermined. */
   assessment?: Exclude<Assessment, "mixed">;
 }
-interface CompiledCategory { category: HealthCategory; patterns: string[] }
+interface CompiledCategory { category: HealthCategory; patterns: string[]; index: number }
 
 const defaults: HealthCategory[] = [
   { name: "Authentication", kinds: ["sso-*", "http-auth", "auth-*"], assessment: "environment" },
@@ -31,7 +31,9 @@ const compare = (left: string, right: string) => {
 export function compileCategories(categories: HealthCategory[] = defaults) {
   if (!Array.isArray(categories) || categories.length > 100) throw new Error("Invalid health categories");
   const names = new Set<string>();
-  const compiled = categories.map(category => {
+  const exactMatches = new Map<string, CompiledCategory>();
+  const wildcardMatches: { pattern: string; entry: CompiledCategory }[] = [];
+  categories.forEach((category, index) => {
     if (!category || typeof category.name !== "string" || !category.name.trim() ||
         category.name.length > 120 || category.name === other.name || names.has(category.name) ||
         !Array.isArray(category.kinds) || category.kinds.length === 0 || category.kinds.length > 100 ||
@@ -45,11 +47,29 @@ export function compileCategories(categories: HealthCategory[] = defaults) {
       if (typeof pattern !== "string" || !pattern || pattern.length > 200) throw new Error("Invalid health kind pattern");
       return pattern.replace(/\*+/g, "*");
     });
-    return { category: { ...category, kinds: [...category.kinds] }, patterns };
+    const entry = { category: { ...category, kinds: [...category.kinds] }, patterns, index };
+    for (const pattern of patterns) {
+      if (pattern.includes("*")) wildcardMatches.push({ pattern, entry });
+      else if (!exactMatches.has(pattern)) exactMatches.set(pattern, entry);
+    }
   });
+  const resolutions = new Map<string, HealthCategory>();
   return {
     forKind(kind: string): HealthCategory {
-      return compiled.find(entry => entry.patterns.some(pattern => matchesKind(pattern, kind)))?.category ?? other;
+      const cached = resolutions.get(kind);
+      if (cached) return cached;
+      const exact = exactMatches.get(kind);
+      let match: HealthCategory | undefined;
+      for (const candidate of wildcardMatches) {
+        if (exact && candidate.entry.index > exact.index) break;
+        if (matchesKind(candidate.pattern, kind)) {
+          match = candidate.entry.category;
+          break;
+        }
+      }
+      const category = match ?? exact?.category ?? other;
+      resolutions.set(kind, category);
+      return category;
     },
   };
 }

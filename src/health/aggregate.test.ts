@@ -164,6 +164,18 @@ describe("health aggregation", () => {
     expect(compileCategories([]).forKind("http-5xx").name).toBe("Other signals");
   });
 
+  it("preserves earlier wildcard priority over later exact matches and caches repeated kinds", () => {
+    const categories = compileCategories([
+      { name: "Broad", kinds: ["http-*"] },
+      { name: "Exact", kinds: ["http-5xx"] },
+      { name: "Other exact", kinds: ["page-error"] },
+    ]);
+    expect(categories.forKind("http-5xx").name).toBe("Broad");
+    expect(categories.forKind("http-5xx")).toBe(categories.forKind("http-5xx"));
+    expect(categories.forKind("page-error").name).toBe("Other exact");
+    expect(categories.forKind("unknown-kind").name).toBe("Other signals");
+  });
+
   it("rejects ambiguous or invalid category configuration", () => {
     expect(() => compileCategories([{ name: "Other signals", kinds: ["*"] }])).toThrow();
     expect(() => compileCategories([{ name: "same", kinds: ["a"] }, { name: "same", kinds: ["b"] }])).toThrow();

@@ -90,23 +90,6 @@ function defaultSignal(event: EnvSignalCaptureEvent): RetainedSignal | undefined
   return undefined;
 }
 
-function isRelevantUrl(address: string | undefined, policy: ReturnType<typeof normalizeCaptureOptions>): boolean {
-  if (!address) return true;
-  try {
-    const url = new URL(address);
-    if (!["http:", "https:"].includes(url.protocol)) return false;
-    const host = url.hostname.toLowerCase();
-    if (!policy.includeHosts.includes(host) || policy.excludeHosts.includes(host)) return false;
-    return !policy.excludeUrls.some(exclusion => {
-      const path = exclusion.slice(new URL(exclusion).origin.length);
-      return url.origin === new URL(exclusion).origin &&
-        (url.pathname === path || url.pathname.startsWith(path.endsWith("/") ? path : `${path}/`));
-    });
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Observe the supplied page and context and retain bounded, sanitized environment evidence.
  * Call from an opt-in lazy fixture and always call `dispose()` in its `finally` block.
@@ -115,6 +98,31 @@ function isRelevantUrl(address: string | undefined, policy: ReturnType<typeof no
 export function captureEnvSignals({ page, context, testInfo, options = {} }: CaptureEnvSignalsOptions): EnvSignalCapture {
   const policy = normalizeCaptureOptions(options, pageHost(page, testInfo));
   const discoverFirstHost = options.includeHosts === undefined && policy.includeHosts.length === 0;
+  const includedHosts = new Set(policy.includeHosts);
+  const excludedHosts = new Set(policy.excludeHosts);
+  const excludedPaths = policy.excludeUrls.map(address => {
+    const url = new URL(address);
+    return { origin: url.origin, pathname: url.pathname };
+  });
+  const isRelevantUrl = (address: string | undefined): boolean => {
+    if (!address) return true;
+    let url: URL;
+    try {
+      url = new URL(address);
+    } catch {
+      return false;
+    }
+    if ((url.protocol !== "http:" && url.protocol !== "https:") ||
+      !includedHosts.has(url.hostname) || excludedHosts.has(url.hostname)) return false;
+    for (const exclusion of excludedPaths) {
+      if (url.origin === exclusion.origin &&
+        (url.pathname === exclusion.pathname ||
+          url.pathname.startsWith(exclusion.pathname.endsWith("/") ? exclusion.pathname : `${exclusion.pathname}/`))) {
+        return false;
+      }
+    }
+    return true;
+  };
   const pages = new Set<Page>();
   const pageListeners = new Map<Page, {
     onPageError: (error: Error) => void;
@@ -126,6 +134,7 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
   const pageIds = new WeakMap<Page, number>();
   let nextPageId = 0;
   const correlationTokens = new Map<number, IgnoredResponseToken>();
+  const correlationTokenIdsByPage = new Map<Page, Set<number>>();
   const responseQueues = new Map<string, CorrelationQueue>();
   let nextCorrelationTokenId = 0;
   let disposed = false;
@@ -153,12 +162,14 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
   const record = (event: EnvSignalRecord): void => {
     if (!event || typeof event !== "object" || Array.isArray(event) || typeof event.kind !== "string" ||
       (event.url !== undefined && typeof event.url !== "string") ||
-      (event.description !== undefined && typeof event.description !== "string") || !isRelevantUrl(event.url, policy)) return;
+      (event.description !== undefined && typeof event.description !== "string") || !isRelevantUrl(event.url)) return;
     appendSignal(event.kind, event.description ?? "");
   };
 
-  const classify = (event: EnvSignalCaptureEvent): void => {
-    if (disposed || !isRelevantUrl(event.url, policy) ||
+  const classify = (event: EnvSignalCaptureEvent, relevant?: boolean): void => {
+    if (disposed) return;
+    if (correlationTokens.size) pruneExpiredCorrelationTokens(Date.now());
+    if (!(relevant ?? isRelevantUrl(event.url)) ||
       (event.status !== undefined && policy.ignoredHttpStatuses.includes(event.status))) return;
     for (const classifier of policy.classifiers) {
       try {
@@ -223,6 +234,11 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
 
   const removeCorrelationToken = (token: IgnoredResponseToken): void => {
     if (!correlationTokens.delete(token.id)) return;
+    if (token.page) {
+      const pageTokenIds = correlationTokenIdsByPage.get(token.page);
+      pageTokenIds?.delete(token.id);
+      if (!pageTokenIds?.size) correlationTokenIdsByPage.delete(token.page);
+    }
     unlinkCorrelationToken(token);
   };
 
@@ -247,7 +263,7 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
     signal?: RetainedSignal,
     request?: Request,
   ): void => {
-    if (kind === "console" && !isRelevantUrl(address, policy)) return;
+    if (kind === "console" && !isRelevantUrl(address)) return;
     const now = Date.now();
     pruneExpiredCorrelationTokens(now);
     const maximumTokens = policy.maxEvents * 4;
@@ -271,6 +287,11 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
     else queue.consoleTail = token;
     responseQueues.set(key, queue);
     correlationTokens.set(token.id, token);
+    if (target) {
+      const pageTokenIds = correlationTokenIdsByPage.get(target) ?? new Set<number>();
+      pageTokenIds.add(token.id);
+      correlationTokenIdsByPage.set(target, pageTokenIds);
+    }
   };
 
   const belongsToPage = (token: IgnoredResponseToken, target: Page): boolean => {
@@ -292,6 +313,9 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
     unlinkCorrelationToken(token);
     token.page = target;
     token.key = key;
+    const pageTokenIds = correlationTokenIdsByPage.get(target) ?? new Set<number>();
+    pageTokenIds.add(token.id);
+    correlationTokenIdsByPage.set(target, pageTokenIds);
     const queue = responseQueues.get(key) ?? {};
     let next = queue.responseHead;
     while (next && next.id < token.id) next = next.next;
@@ -341,9 +365,11 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
     target.removeListener("close", listeners.onClose);
     pageListeners.delete(target);
     pages.delete(target);
-    for (const token of correlationTokens.values()) {
-      if (token.page === target) retainExpiredConsole(token);
+    for (const tokenId of correlationTokenIdsByPage.get(target) ?? []) {
+      const token = correlationTokens.get(tokenId);
+      if (token) retainExpiredConsole(token);
     }
+    correlationTokenIdsByPage.delete(target);
   };
 
   const registerPage = (target: Page): void => {
@@ -356,7 +382,7 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
       if (message.type() !== "error") return;
       bindPendingResponses(target);
       const url = message.location().url || target.url();
-      if (!isRelevantUrl(url, policy)) return;
+      if (!isRelevantUrl(url)) return;
       const text = consoleErrorText(message);
       const status = /^Failed to load resource:.*?status of\s+(\d{3})\b/i.exec(text)?.[1];
       if (status && policy.ignoredHttpStatuses.includes(Number(status))) {
@@ -373,25 +399,35 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
     target.on("close", onClose);
   };
   const onPage = (target: Page): void => {
+    if (disposed) return;
+    if (correlationTokens.size) pruneExpiredCorrelationTokens(Date.now());
     registerPage(target);
     bindPendingResponses(target);
   };
   const onRequest = (request: Request): void => {
+    if (disposed) return;
+    if (correlationTokens.size) pruneExpiredCorrelationTokens(Date.now());
     if (!discoverFirstHost || policy.includeHosts.length || !request.isNavigationRequest()) return;
     try {
       const frame = request.frame();
       if (frame.parentFrame() || frame.page() !== page) return;
       const host = new URL(request.url()).hostname.toLowerCase();
-      if (host && !policy.excludeHosts.includes(host)) policy.includeHosts.push(host);
+      if (host && !excludedHosts.has(host)) {
+        policy.includeHosts.push(host);
+        includedHosts.add(host);
+      }
     } catch {
       return;
     }
   };
   const onResponse = (response: Response): void => {
+    if (disposed) return;
+    if (correlationTokens.size) pruneExpiredCorrelationTokens(Date.now());
     const request = response.request();
     const address = response.url();
     const status = response.status();
-    if (policy.ignoredHttpStatuses.includes(status) && isRelevantUrl(address, policy)) {
+    const relevant = isRelevantUrl(address);
+    if (policy.ignoredHttpStatuses.includes(status) && relevant) {
       let sourcePage: Page | undefined;
       try { sourcePage = request.frame().page(); } catch { /* Service-worker requests have no frame. */ }
       if (sourcePage) {
@@ -405,7 +441,7 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
     classify({
       source: "response", url: address, status,
       method: request.method(), resourceType: request.resourceType(), text: `HTTP ${status}`,
-    });
+    }, relevant);
   };
   const onRequestFailed = (request: Request): void => classify({
     source: "request-failed", url: request.url(), method: request.method(),
@@ -436,6 +472,7 @@ export function captureEnvSignals({ page, context, testInfo, options = {} }: Cap
     pages.clear();
     pageListeners.clear();
     correlationTokens.clear();
+    correlationTokenIdsByPage.clear();
     responseQueues.clear();
   };
 
