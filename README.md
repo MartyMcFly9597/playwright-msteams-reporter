@@ -326,6 +326,7 @@ Health reporter options:
 | `enabled` | `true` | Set `false` to disable this reporter. |
 | `annotationPrefix` | `env-signal:` | Annotation prefix; the non-empty prefix is removed before category matching. |
 | `categories` | Built-in categories | Replaces, rather than merges with, the built-in taxonomy. `[]` disables all known-kind mappings; signals still count in `Other signals`. |
+| `errorPatternsFile` | Built-in patterns | Path to a JSON file `{ "errorPatterns": [...] }` that replaces the built-in failure-text patterns (see below). |
 | `title` / `environment` | `Test Run Health` / none | Card title and optional environment label. |
 | `maxTests` | `5` | Maximum failed-test detail groups (`0` to `100`); aggregate counts are not capped. |
 | `maxPayloadBytes` | `26000` | Complete serialized envelope limit (`4096` to `26000` UTF-8 bytes). Details are omitted deterministically before counts are changed. |
@@ -337,6 +338,37 @@ Health reporter options:
 | `shouldRun` | always | Optional suite predicate. A false result suppresses this health card only. |
 | `quiet` / `debug` | `false` / `false` | `quiet` suppresses the one-line health summary; `debug` logs the card after sanitization. Neither forwards test stdout/stderr. |
 | `webhookUrl`, `webhookUrlEnv`, `webhookTimeoutMs`, `webhookType` | Same as the original reporter | Destination precedence, timeout validation, and Power Automate/Teams delivery are shared with the original reporter. |
+
+### Failure-text patterns
+
+Some failures leave no signal annotation, such as a first `page.goto` that cannot
+resolve the app's host. The health reporter therefore also tests the first error
+of each failed test against patterns. The built-in pattern matches Chromium
+navigation errors (`net::ERR_NAME_NOT_RESOLVED`, `ERR_CONNECTION_REFUSED`,
+`ERR_CONNECTION_TIMED_OUT`, `ERR_ADDRESS_UNREACHABLE`, `ERR_INTERNET_DISCONNECTED`)
+and reports `🌐 Network: App unreachable from this network` as environment-suspect.
+
+To replace the built-in patterns, set `errorPatternsFile` to a JSON file:
+
+```json
+{
+  "errorPatterns": [
+    {
+      "match": "Gateway Timeout",
+      "category": "Gateway",
+      "assessment": "environment",
+      "message": "Gateway timed out"
+    }
+  ]
+}
+```
+
+`match` is a regular expression source, `assessment` is `environment`, `regression`
+or `undetermined` (default), and `message` is a short line shown on the card. Each
+match keeps its own category and assessment. A pattern whose `category` has the same
+name as a signal category is grouped with it, and is treated as noise when that
+category is marked `noise`. An invalid entry throws a configuration error naming its
+index.
 
 Categories are ordered; the first category with a matching kind pattern wins.
 Patterns match the entire kind, case-sensitively. `*` is the only wildcard;

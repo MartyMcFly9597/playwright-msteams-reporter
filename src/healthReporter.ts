@@ -2,6 +2,8 @@ import type { FullConfig, FullResult, Reporter, Suite, TestError } from "@playwr
 import type { MsTeamsReporterOptions } from ".";
 import { aggregateHealth, compileCategories } from "./health/aggregate";
 import type { HealthCategory } from "./health/aggregate";
+import { compileErrorPatterns, defaultErrorPatterns, readErrorPatternsFile } from "./health/errorPatterns";
+import type { ErrorPattern } from "./health/errorPatterns";
 import { buildHealthMessage, sanitizeHealthText } from "./health/render";
 import type { HealthDisplayOptions } from "./health/render";
 import { resolveWebhookUrl } from "./utils/resolveWebhookUrl";
@@ -9,6 +11,7 @@ import { resolveWebhookTimeout } from "./utils/resolveWebhookTimeout";
 import { sendWebhookMessage } from "./utils/sendWebhookMessage";
 
 export type { HealthCategory } from "./health/aggregate";
+export type { ErrorPattern } from "./health/errorPatterns";
 
 /** Configuration for the optional health summary reporter. */
 export interface HealthReporterOptions extends HealthDisplayOptions, Pick<MsTeamsReporterOptions,
@@ -20,6 +23,8 @@ export interface HealthReporterOptions extends HealthDisplayOptions, Pick<MsTeam
   annotationPrefix?: string;
   /** Ordered signal-category mapping. When supplied, replaces the built-in categories. */
   categories?: HealthCategory[];
+  /** Path to a JSON file `{ "errorPatterns": [...] }` that replaces the built-in failure-text patterns. */
+  errorPatternsFile?: string;
 }
 
 function validateLimitsAndEnums(options: HealthReporterOptions): void {
@@ -70,12 +75,15 @@ export default class HealthReporter implements Reporter {
   private suite?: Suite;
   private readonly options: HealthReporterOptions;
   private readonly taxonomy: ReturnType<typeof compileCategories>;
+  private readonly errorPatterns: ReturnType<typeof compileErrorPatterns>;
   private readonly runnerErrors: string[] = [];
   private runnerErrorsOmitted = 0;
 
   /** Create a health reporter. Delivery and notification gates follow the supplied options. */
   constructor(options: HealthReporterOptions = {}) {
     validateOptions(options);
+    const patterns: ErrorPattern[] = options.errorPatternsFile === undefined ? defaultErrorPatterns : readErrorPatternsFile(options.errorPatternsFile);
+    this.errorPatterns = compileErrorPatterns(patterns);
     this.taxonomy = compileCategories(options.categories);
     this.options = {
       ...options,
@@ -110,7 +118,7 @@ export default class HealthReporter implements Reporter {
     if (!this.suite && this.runnerErrors.length === 0 && result.status === "passed") return;
     if (this.suite && this.options.shouldRun && !this.options.shouldRun(this.suite)) return;
     const suite = this.suite ?? { allTests: () => [] } as unknown as Suite;
-    const summary = aggregateHealth(suite, this.taxonomy, this.options.annotationPrefix);
+    const summary = aggregateHealth(suite, this.taxonomy, this.options.annotationPrefix, this.errorPatterns);
     const total = Object.values(summary.outcomes).reduce((sum, count) => sum + count, 0);
     const runFailed = result.status !== "passed" || this.runnerErrors.length > 0;
     const hasSignals = summary.categories.length > 0 ||
