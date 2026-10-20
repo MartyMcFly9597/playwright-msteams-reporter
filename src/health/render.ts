@@ -301,7 +301,10 @@ function baseEntries(summary: HealthSummary, options: HealthDisplayOptions, cont
     textEntry(`⏱ ${summary.outcomes.unexpected} failed; ${summary.outcomes.expected} expected; ${summary.outcomes.flaky} flaky; ${summary.outcomes.skipped} skipped. Run: ${context.status}; ${formatDuration(context.duration)}.`),
   ];
   if (summary.outcomes.unexpected === 0) {
-    entries.push(textEntry("✅ No failures.", false, "good"));
+    const passedCleanly = context.status === "passed" && context.errors.length === 0 && !context.errorsOmitted;
+    entries.push(passedCleanly
+      ? textEntry("✅ No failures.", false, "good")
+      : textEntry(`⚠️ No failed tests, but the run did not complete cleanly (${context.status}); see runner errors.`, false, "attention"));
   } else {
     const { environment, regression, mixed, undetermined } = summary.assessments;
     const color = environment > 0 && regression + mixed + undetermined === 0 ? "warning" : "attention";
@@ -312,7 +315,7 @@ function baseEntries(summary: HealthSummary, options: HealthDisplayOptions, cont
     entries.push(textEntry(`🟡 Passed with signals: ${summary.passedWithSignals}. 🔁 Recovered flaky tests with signal evidence: ${summary.recoveredWithSignals}. Tests with superseded-attempt signals: ${summary.previousAttemptsWithSignals}. Not included in final-failure assessments.`, false, "warning"));
   }
   if (summary.flakyWithFinalSignals) {
-    entries.push(textEntry(`🟡 Flaky tests with final-attempt signals: ${summary.flakyWithFinalSignals}. Recovery not established; not included in final-failure assessments.`));
+    entries.push(textEntry(`🟡 Flaky tests with final-attempt signals: ${summary.flakyWithFinalSignals}. Recovery not established; not included in final-failure assessments.`, false, "warning"));
   }
   return entries;
 }

@@ -107,6 +107,9 @@ describe("optional health reporter", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
     const body = JSON.parse(jest.mocked(global.fetch).mock.calls[0][1]?.body as string);
     expect(body.attachments[0].content.body.some((entry: { text?: string }) => entry.text?.includes("global setup failed"))).toBe(true);
+    const texts = body.attachments[0].content.body.map((entry: { text: string }) => entry.text);
+    expect(texts.some((text: string) => text.includes("No failures"))).toBe(false);
+    expect(texts.some((text: string) => text.startsWith("⚠️ No failed tests, but the run did not complete cleanly (failed)"))).toBe(true);
   });
 
   it("includes value-only Playwright runner errors in the health card", async () => {
