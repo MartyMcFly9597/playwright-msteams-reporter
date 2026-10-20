@@ -42,6 +42,13 @@ jobs:
       - name: Run build
         run: npm run build
 
+      - name: Verify release tag matches package version
+        if: github.event_name == 'release'
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          test "$TAG_VERSION" = "$PACKAGE_VERSION"
+
       - name: Publish release
         run: npm publish
         env:
