@@ -382,21 +382,21 @@ detail rows may be omitted while aggregate counts remain complete.
 ### Delivery timeout and failures
 
 Each notification has a `webhookTimeoutMs` deadline covering the HTTP request
-and response-body consumption. The default is `10000` milliseconds when omitted
+and any response-body consumption. The default is `10000` milliseconds when omitted
 or `undefined`. Values must be integers from `1` through `2147483647`; zero,
 negative, fractional, non-finite, and out-of-range values are configuration errors.
 There is no unbounded or zero-disables-timeout mode.
 
-Request failures, timeouts, and response-body failures produce one redacted error
-diagnostic and settle without changing test outcomes. Non-success HTTP responses
-produce a failure message and redacted response text. Diagnostic details are
-limited to 1000 characters after redaction. No delivery retries are made, avoiding
-duplicate notifications when an endpoint accepted a message before failing.
+Request failures, timeouts, and response-body failures settle without changing
+test outcomes. Failures always log `Failed to send message`; redacted error and
+response details are logged only with `debug: true` and are limited to 1000
+characters after redaction. Successful response bodies are not read by default.
+With `debug: true` and `quiet: false`, the body is read within the timeout and
+success details are logged. No delivery retries are made, avoiding duplicate
+notifications when an endpoint accepted a message before failing.
 
-Response bodies are consumed within the deadline even with `quiet: true`, but
-success output stays suppressed. A success message is logged only after the body
-is read successfully. Invalid configuration and errors in `shouldRun` or result-link
-callbacks are not swallowed by transport handling.
+Invalid configuration and errors in `shouldRun` or result-link callbacks are not
+swallowed by transport handling.
 
 Playwright awaits reporters in configuration order. A timed-out delivery settles
 before the next reporter begins; each delivery has its own deadline. Ordered HTTP
@@ -411,8 +411,9 @@ Diagnostic options and card dumps require `debug: true`. Setting
 | --- | --- | --- |
 | Reporter startup banner | Shown | Shown |
 | Forwarded test stdout/stderr | Shown | Suppressed |
-| Success message and response text | Shown | Suppressed |
-| Failure diagnostics | Shown | Shown |
+| Success message and response text | Only with `debug: true` | Suppressed |
+| Concise failure message | Shown | Shown |
+| Failure details and response text | Only with `debug: true` | Only with `debug: true` |
 | Options and card dumps | Only with `debug: true` | Only with `debug: true` |
 
 The configured webhook URL and its canonical `URL.href` form (including removal

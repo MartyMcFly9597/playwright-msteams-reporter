@@ -37,7 +37,7 @@ it.each(["headers", "body"])("exits successfully and runs a second reporter afte
       testDir: directory, testMatch: "**/example.spec.js", workers: 1, retries: 0,
       outputDir: path.join(directory, "results"),
       reporter: [
-        [require.resolve("./index"), { webhookUrlEnv: "ACME_STALL_WEBHOOK", webhookTimeoutMs: 1000, quiet: true }],
+        [require.resolve("./index"), { webhookUrlEnv: "ACME_STALL_WEBHOOK", webhookTimeoutMs: 1000, debug: true }],
         [require.resolve("./index"), { webhookUrlEnv: "ACME_NEXT_WEBHOOK", webhookTimeoutMs: 5000, quiet: true }],
         ["json", { outputFile }],
       ],

@@ -18,6 +18,24 @@ function failureReason(error: unknown): string {
   }
 }
 
+async function cancelResponseBody(response: Response, signal: AbortSignal): Promise<void> {
+  if (!response.body) return;
+  let removeAbortListener = (): void => {};
+  const aborted = new Promise<void>(resolve => {
+    const onAbort = (): void => resolve();
+    if (signal.aborted) resolve();
+    else {
+      signal.addEventListener("abort", onAbort, { once: true });
+      removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+    }
+  });
+  try {
+    await Promise.race([response.body.cancel(), aborted]);
+  } finally {
+    removeAbortListener();
+  }
+}
+
 export async function sendWebhookMessage(
   webhookUrl: string,
   body: string,
@@ -27,7 +45,7 @@ export async function sendWebhookMessage(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
-  let responseText: string;
+  let responseText: string | undefined;
   try {
     response = await fetch(webhookUrl, {
       method: "POST",
@@ -35,22 +53,28 @@ export async function sendWebhookMessage(
       body,
       signal: controller.signal,
     });
-    responseText = await response.text();
+    if (!response.ok || (options.debug && !options.quiet)) {
+      responseText = await response.text();
+    } else {
+      await cancelResponseBody(response, controller.signal);
+      if (controller.signal.aborted) throw new Error("Webhook delivery timed out during response cleanup");
+    }
   } catch (error) {
     const reason = controller.signal.aborted
       ? `Webhook delivery timed out after ${timeoutMs}ms`
       : failureReason(error);
-    console.error(`Failed to send message: ${diagnosticText(reason, webhookUrl)}`);
+    console.error("Failed to send message");
+    if (options.debug) console.error(diagnosticText(reason, webhookUrl));
     return;
   } finally {
     clearTimeout(timer);
   }
   if (!response.ok) {
     console.error("Failed to send message");
-    console.error(diagnosticText(responseText, webhookUrl));
+    if (options.debug) console.error(diagnosticText(responseText ?? "", webhookUrl));
     return;
   }
-  if (options.quiet) return;
+  if (!options.debug || options.quiet) return;
   console.log("Message sent successfully");
-  if (responseText !== "1") console.log(diagnosticText(responseText, webhookUrl));
+  if (responseText && responseText !== "1") console.log(diagnosticText(responseText, webhookUrl));
 }

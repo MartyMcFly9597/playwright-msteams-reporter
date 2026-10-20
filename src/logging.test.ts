@@ -41,8 +41,8 @@ describe("webhook logging privacy", () => {
     await processResults(suite, {
       ...destinations[0], notifyOnSuccess: true,
     });
-    expect(console.log).toHaveBeenCalledTimes(1);
-    expect(console.log).toHaveBeenCalledWith("Message sent successfully");
+    expect(console.log).not.toHaveBeenCalled();
+    expect(console.log).not.toHaveBeenCalledWith("Message sent successfully");
   });
 
   it.each([

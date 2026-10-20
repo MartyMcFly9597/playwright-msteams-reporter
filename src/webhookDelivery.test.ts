@@ -42,19 +42,20 @@ describe("bounded webhook delivery", () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
-  it.each([false, true])("keeps the timeout active through body consumption when quiet=%s", async (quiet) => {
+  it.each([false, true])("keeps the timeout active through failure body consumption when quiet=%s", async (quiet) => {
     global.fetch = jest.fn(async (_url, request) => ({
-      ok: true,
+      ok: false,
       text: () => new Promise((_resolve, reject) => {
         request?.signal?.addEventListener("abort", () => reject(new Error("body aborted")), { once: true });
       }),
     } as unknown as Response));
-    const options = { webhookUrl, webhookTimeoutMs: 25, quiet, notifyOnSuccess: true };
+    const options = { webhookUrl, webhookTimeoutMs: 25, quiet, notifyOnSuccess: true, debug: true };
     const pending = processResults(suite, options);
     await jest.advanceTimersByTimeAsync(25);
     await expect(pending).resolves.toBeUndefined();
     expect(console.log).not.toHaveBeenCalledWith("Message sent successfully");
-    expect(console.error).toHaveBeenCalledTimes(1);
+    expect(console.error).toHaveBeenCalledTimes(2);
+    expect(console.error).toHaveBeenCalledWith("Failed to send message");
     expect(jest.getTimerCount()).toBe(0);
   });
 
@@ -62,13 +63,14 @@ describe("bounded webhook delivery", () => {
     const failure = new Error(`Connection failed at ${webhookUrl}`);
     global.fetch = jest.fn().mockImplementation(async () => {
       if (stage === "request") throw failure;
-      return { ok: true, text: async () => { throw failure; } };
+      return { ok: false, text: async () => { throw failure; } };
     });
-    await expect(processResults(suite, { webhookUrl, notifyOnSuccess: true })).resolves.toBeUndefined();
+    await expect(processResults(suite, { webhookUrl, notifyOnSuccess: true, debug: true })).resolves.toBeUndefined();
     const diagnostics = JSON.stringify(jest.mocked(console.error).mock.calls);
     expect(diagnostics).not.toContain("synthetic-secret");
     expect(diagnostics).toContain("<redacted>");
-    expect(console.error).toHaveBeenCalledTimes(1);
+    expect(console.error).toHaveBeenCalledTimes(2);
+    expect(console.error).toHaveBeenCalledWith("Failed to send message");
     expect(console.log).not.toHaveBeenCalledWith("Message sent successfully");
     expect(jest.getTimerCount()).toBe(0);
   });
@@ -79,14 +81,14 @@ describe("bounded webhook delivery", () => {
   ])("settles when a rejection cannot be formatted: $name", async ({ rejection }) => {
     global.fetch = jest.fn().mockRejectedValue(rejection);
     await expect(processResults(suite, { webhookUrl, notifyOnSuccess: true })).resolves.toBeUndefined();
-    expect(console.error).toHaveBeenCalledWith("Failed to send message: Unknown error");
+    expect(console.error).toHaveBeenCalledWith("Failed to send message");
     expect(console.error).toHaveBeenCalledTimes(1);
     expect(jest.getTimerCount()).toBe(0);
   });
 
   it("bounds error diagnostics after redaction", async () => {
     global.fetch = jest.fn().mockRejectedValue(new Error(`${webhookUrl} ${"x".repeat(5000)}`));
-    await processResults(suite, { webhookUrl, notifyOnSuccess: true });
+    await processResults(suite, { webhookUrl, notifyOnSuccess: true, debug: true });
     const output = jest.mocked(console.error).mock.calls.flat().join(" ");
     expect(output).not.toContain("synthetic-secret");
     expect(output.length).toBeLessThanOrEqual(1100);
@@ -96,10 +98,9 @@ describe("bounded webhook delivery", () => {
     global.fetch = jest.fn().mockRejectedValue(Object.assign(new TypeError("fetch failed"), {
       cause: new Error(`ECONNREFUSED at ${webhookUrl}`),
     }));
-    await processResults(suite, { webhookUrl, notifyOnSuccess: true });
-    expect(console.error).toHaveBeenCalledWith(
-      "Failed to send message: fetch failed: ECONNREFUSED at <redacted>"
-    );
+    await processResults(suite, { webhookUrl, notifyOnSuccess: true, debug: true });
+    expect(console.error).toHaveBeenCalledWith("Failed to send message");
+    expect(console.error).toHaveBeenCalledWith("fetch failed: ECONNREFUSED at <redacted>");
     expect(jest.getTimerCount()).toBe(0);
   });
 
@@ -107,7 +108,7 @@ describe("bounded webhook delivery", () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: false, text: async () => `${webhookUrl} ${"x".repeat(5000)}`,
     });
-    await processResults(suite, { webhookUrl, notifyOnSuccess: true, quiet: true });
+    await processResults(suite, { webhookUrl, notifyOnSuccess: true, quiet: true, debug: true });
     const output = jest.mocked(console.error).mock.calls.flat().join(" ");
     expect(output).not.toContain("synthetic-secret");
     expect(output).toContain("<redacted>");
@@ -116,19 +117,70 @@ describe("bounded webhook delivery", () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
-  it("waits for the response body before logging success and clears its timer", async () => {
-    let finishBody: ((text: string) => void) | undefined;
+  it("does not read a successful response body by default", async () => {
+    const text = jest.fn();
+    const cancel = jest.fn().mockResolvedValue(undefined);
     global.fetch = jest.fn().mockResolvedValue({
-      ok: true, text: () => new Promise<string>(resolve => { finishBody = resolve; }),
+      ok: true, text, body: { cancel },
     });
-    const pending = processResults(suite, { webhookUrl, notifyOnSuccess: true });
-    await jest.advanceTimersByTimeAsync(0);
+    await processResults(suite, { webhookUrl, notifyOnSuccess: true });
+    expect(text).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
     expect(console.log).not.toHaveBeenCalledWith("Message sent successfully");
-    expect(jest.getTimerCount()).toBe(1);
-    finishBody?.("1");
-    await pending;
-    expect(console.log).toHaveBeenCalledWith("Message sent successfully");
     expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    { name: "default logging", options: {} },
+    { name: "quiet debug logging", options: { quiet: true, debug: true } },
+  ])("cancels an unused successful response body within the deadline ($name)", async ({ options }) => {
+    const cancel = jest.fn(() => new Promise<void>(() => {}));
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, body: { cancel } });
+    const pending = processResults(suite, { webhookUrl, webhookTimeoutMs: 25, notifyOnSuccess: true, ...options });
+
+    await jest.advanceTimersByTimeAsync(0);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(25);
+    await expect(pending).resolves.toBeUndefined();
+
+    expect(console.error).toHaveBeenCalledWith("Failed to send message");
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it("reads successful response text only for non-quiet debug logging", async () => {
+    const text = jest.fn().mockResolvedValue("debug response");
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, text });
+    await processResults(suite, { webhookUrl, notifyOnSuccess: true, debug: true });
+    expect(text).toHaveBeenCalledTimes(1);
+    expect(console.log).toHaveBeenCalledWith("Message sent successfully");
+    expect(console.log).toHaveBeenCalledWith("debug response");
+  });
+
+  it("does not read or log successful responses when quiet overrides debug", async () => {
+    const text = jest.fn();
+    const cancel = jest.fn().mockResolvedValue(undefined);
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, text, body: { cancel } });
+    await processResults(suite, { webhookUrl, notifyOnSuccess: true, quiet: true, debug: true });
+    expect(text).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(console.log).not.toHaveBeenCalledWith("Message sent successfully");
+  });
+
+  it("keeps failure details concise unless debug is enabled", async () => {
+    const text = jest.fn().mockResolvedValue("synthetic receiver detail");
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, text });
+    await processResults(suite, { webhookUrl, notifyOnSuccess: true, debug: true });
+    expect(text).toHaveBeenCalledTimes(1);
+    expect(console.error).toHaveBeenCalledWith("Failed to send message");
+    expect(console.error).toHaveBeenCalledWith("synthetic receiver detail");
+  });
+
+  it("keeps response body details out of default failure logs", async () => {
+    const text = jest.fn().mockResolvedValue("synthetic receiver detail");
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, text });
+    await processResults(suite, { webhookUrl, notifyOnSuccess: true });
+    expect(text).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(console.error).mock.calls).toEqual([["Failed to send message"]]);
   });
 
   it.each([0, -1, NaN, Infinity, 1.5, 2147483648])("rejects invalid timeout %s for construction and direct calls", async (webhookTimeoutMs) => {

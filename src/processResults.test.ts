@@ -85,6 +85,7 @@ describe("processResults", () => {
       ...DEFAULT_OPTIONS,
       webhookUrl: MSTEAMS_WEBHOOK_URL,
       webhookType: "msteams",
+      debug: true,
     };
     await processResults(undefined, options);
     expect(consoleErrorSpy).toHaveBeenCalledWith("No test suite found");
@@ -98,6 +99,7 @@ describe("processResults", () => {
       ...DEFAULT_OPTIONS,
       webhookUrl: MSTEAMS_WEBHOOK_URL,
       webhookType: "msteams",
+      debug: true,
       notifyOnSuccess: false,
     };
     const suite: any = {
@@ -139,6 +141,7 @@ describe("processResults", () => {
       ...DEFAULT_OPTIONS,
       webhookUrl: MSTEAMS_WEBHOOK_URL,
       webhookType: "msteams",
+      debug: true,
     };
     await processResults(SUITE_MOCK_PASSED as any, options);
     expect(fetchMock).toHaveBeenCalledWith(
@@ -160,6 +163,7 @@ describe("processResults", () => {
       ...DEFAULT_OPTIONS,
       webhookUrl: MSTEAMS_WEBHOOK_URL,
       webhookType: "msteams",
+      debug: true,
     };
     await processResults(SUITE_MOCK_PASSED as any, options);
     expect(consoleLogSpy).toHaveBeenCalledWith("Some fake message");
@@ -177,6 +181,7 @@ describe("processResults", () => {
       ...DEFAULT_OPTIONS,
       webhookUrl: MSTEAMS_WEBHOOK_URL,
       webhookType: "msteams",
+      debug: true,
     };
     await processResults(SUITE_MOCK_PASSED as any, options);
     expect(fetchMock).toHaveBeenCalledWith(

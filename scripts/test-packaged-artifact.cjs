@@ -168,7 +168,7 @@ function configSource({ directory, format, webhookType, includeHealth, includeTy
   const consumer = path.join(directory, "node_modules", "@martymcfly9597", "playwright-msteams-reporter", "dist");
   const reporters = [
     [path.join(consumer, "index.js"), {
-      webhookUrlEnv: "PACKED_WEBHOOK", webhookType, title: "Original Results", quiet: false, webhookTimeoutMs: timeoutMs,
+      webhookUrlEnv: "PACKED_WEBHOOK", webhookType, title: "Original Results", quiet: false, debug: true, webhookTimeoutMs: timeoutMs,
     }],
     ...(includeHealth ? [[path.join(consumer, "healthReporter.js"), {
       webhookUrlEnv: "PACKED_WEBHOOK", webhookType,
