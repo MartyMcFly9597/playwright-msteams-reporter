@@ -193,7 +193,7 @@ function configSource({ directory, format, webhookType, includeHealth, includeTy
     return `import rootReporter from "@martymcfly9597/playwright-msteams-reporter";\n` +
       `import healthReporter from "@martymcfly9597/playwright-msteams-reporter/healthReporter";\n` +
       `import captureModule from "@martymcfly9597/playwright-msteams-reporter/healthCapture";\n` +
-      `if (typeof rootReporter.default !== "function" || typeof healthReporter.default !== "function" || typeof captureModule.captureEnvSignals !== "function") throw new Error("Packed ESM imports failed");\n` +
+      `if (typeof rootReporter !== "function" || typeof healthReporter !== "function" || typeof captureModule.captureEnvSignals !== "function") throw new Error("Packed ESM imports failed");\n` +
       `export default ${JSON.stringify(config)};\n`;
   }
   return `module.exports = ${JSON.stringify(config)};\n`;
@@ -264,7 +264,7 @@ async function verifyNodeEsmImports(consumer) {
     `import health from "${packageName}/healthReporter";`,
     `import capture from "${packageName}/healthCapture";`,
     `import models from "${packageName}/models";`,
-    'if (typeof reporter.default !== "function" || typeof health.default !== "function" || typeof capture.captureEnvSignals !== "function" || typeof models !== "object") process.exit(1);',
+    'if (typeof reporter !== "function" || typeof health !== "function" || typeof capture.captureEnvSignals !== "function" || typeof models !== "object") process.exit(1);',
   ].join("\n");
   await execute(process.execPath, ["--input-type=module", "-e", source], {
     cwd: consumer, env: childEnvironment(), timeout: 30000, windowsHide: true, maxBuffer: 2 * 1024 * 1024,
@@ -323,7 +323,7 @@ async function main() {
     const [packed] = JSON.parse(packOutput);
     const tarball = path.join(directory, packed.filename);
     const files = new Set(packed.files.map(file => file.path));
-    for (const file of ["dist/index.js", "dist/index.d.ts", "dist/healthReporter.js", "dist/healthReporter.d.ts", "dist/healthCapture.js", "dist/healthCapture.d.ts", "dist/models/index.js"]) {
+    for (const file of ["dist/index.js", "dist/index.d.ts", "dist/esm/index.mjs", "dist/healthReporter.js", "dist/healthReporter.d.ts", "dist/esm/healthReporter.mjs", "dist/healthCapture.js", "dist/healthCapture.d.ts", "dist/models/index.js"]) {
       assert(files.has(file), `Packed artifact is missing ${file}`);
     }
     const packageExports = require(path.join(root, "package.json")).exports;
@@ -335,7 +335,7 @@ async function main() {
     assert(!packed.files.some(file => /\.test\.(?:js|d\.ts)$/.test(file.path)), "Packed artifact must not contain compiled tests");
     const allowedRootFiles = new Set(["package.json", "README.md", "CHANGELOG.md", "LICENSE"]);
     const unexpectedFiles = packed.files.filter(file =>
-      !allowedRootFiles.has(file.path) && !/^dist\/.+\.(?:js|d\.ts)$/.test(file.path)
+      !allowedRootFiles.has(file.path) && !/^dist\/.+\.(?:js|mjs|d\.ts)$/.test(file.path)
     );
     assert.deepEqual(unexpectedFiles, [], "Packed artifact may contain only package metadata/docs/license and runtime/declaration files under dist");
     assert(!packed.files.some(file => /(?:^|\/)(?:playwright-report|test-results|blob-report)(?:\/|$)/.test(file.path)), "Packed artifact must not contain generated Playwright reports, blobs, or test results");
@@ -358,13 +358,13 @@ async function main() {
 
     receiver.setBehavior("success");
     const baselineMsteams = await runConsumer({ directory: currentConsumer, format: "cjs", webhookType: "msteams", includeHealth: false, includeTypes: true, signal: false, receiverUrl });
-    assert.equal(receiver.requests.length, 1);
+    assert.equal(receiver.requests.length, 1, `${baselineMsteams.stdout}\n${baselineMsteams.stderr}`.replaceAll("synthetic-package-secret", "<redacted>"));
     assert.equal((baselineMsteams.stdout.match(/PACKED_STDOUT_ONCE/g) || []).length, 1);
     const originalMsteamsBody = receiver.requests[0].body;
 
     receiver.setBehavior("success");
     const healthMsteams = await runConsumer({ directory: currentConsumer, format: "esm", webhookType: "msteams", includeHealth: true, includeTypes: true, signal: true, receiverUrl });
-    assert.equal(receiver.requests.length, 2);
+    assert.equal(receiver.requests.length, 2, `${healthMsteams.stdout}\n${healthMsteams.stderr}`.replaceAll("synthetic-package-secret", "<redacted>"));
     assert.equal(receiver.requests[0].body, originalMsteamsBody);
     assert.match(receiver.requests[1].body, /Passed with signals: 1/);
     assert.equal((healthMsteams.stdout.match(/PACKED_STDOUT_ONCE/g) || []).length, 1);
