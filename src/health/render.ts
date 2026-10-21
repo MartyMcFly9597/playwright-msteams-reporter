@@ -89,7 +89,9 @@ function sanitizeUrl(value: string): string {
 function endsEscapedJsonValue(value: string, quoteIndex: number): boolean {
   const following = value.slice(quoteIndex + 1).trimStart();
   return /^,\s*(?:\\)?["'][^"'\r\n]+(?:\\)?["']\s*:/.test(following) ||
-    /^(?:\\)?[}\]](?:\\)?["']\s*(?:[,;)]|$)/.test(following);
+    /^(?:\\)?[}\]](?:\\)?["']\s*(?:[,;)]|$)/.test(following) ||
+    /^(?:\\)?[}\]]\s+\{/.test(following) ||
+    /^(?:\\)?[}\]]\s*(?:\\)?["']\s+in\b/i.test(following);
 }
 
 function isSecretValueEnd(value: string, index: number, quote: string, escapedOpeningQuote: boolean): boolean {
@@ -107,12 +109,11 @@ function findQuotedSecretEnd(value: string, start: number, quote: string, escape
   return value.length;
 }
 
-function findArraySecretEnd(value: string, start: number): number {
-  let depth = 0;
+function findStructuredSecretEnd(value: string, start: number): number {
+  const closing: string[] = [value[start] === "[" ? "]" : "}"];
   let quote: string | undefined;
   let escaped = false;
-  let index = start;
-  for (; index < value.length; index += 1) {
+  for (let index = start + 1; index < value.length; index += 1) {
     const character = value[index];
     if (quote) {
       if (escaped) escaped = false;
@@ -121,17 +122,23 @@ function findArraySecretEnd(value: string, start: number): number {
       continue;
     }
     if (character === '"' || character === "'" || character === "`") quote = character;
-    else if (character === "[") depth += 1;
-    else if (character === "]" && --depth === 0) return index + 1;
+    else if (character === "[") closing.push("]");
+    else if (character === "{") closing.push("}");
+    else if (character === closing[closing.length - 1]) {
+      closing.pop();
+      if (!closing.length) return index + 1;
+    }
   }
-  return index;
+  return value.length;
 }
 
 function findUnquotedSecretEnd(value: string, start: number): number {
-  if (value[start] === "[") return findArraySecretEnd(value, start);
-  let index = start;
-  while (index < value.length && !/\s/.test(value[index])) index += 1;
-  return index;
+  if (value[start] === "[" || value[start] === "{") return findStructuredSecretEnd(value, start);
+  for (let index = start; index < value.length; index += 1) {
+    if (/\s|[}\]]/.test(value[index])) return index;
+    if (value[index] === "," && /^,\s*(?:\\)?["'][^"'\r\n]+(?:\\)?["']\s*:/.test(value.slice(index))) return index;
+  }
+  return value.length;
 }
 
 function findSecretEnd(value: string, start: number, quote?: string, escapedOpeningQuote = false): number {
@@ -158,9 +165,9 @@ function builtinSanitize(value: string, webhookUrl?: string): string {
   const normalized = value.replace(/\u001b\[[0-9;]*m/g, "");
   return redactSensitiveFields(redactWebhookUrl(normalized, webhookUrl))
     .replace(/\bAuthorization\s*:\s*[^\r\n]+/gi, "Authorization: <redacted>")
-    .replace(/\bDigest\s+[^\r\n]*/gi, "<redacted-authorization>")
+    .replace(/\bDigest\s+(?=[a-z][\w-]*\s*=)[^\r\n]*/gi, "<redacted-authorization>")
     .replace(/\bBearer\s+[^\s,;}"'\\]+/gi, "Bearer <redacted>")
-    .replace(/\b(?:Basic|Digest|NTLM|Negotiate|ApiKey|Token)\s+[^\s,;}"'\\]+/gi, "<redacted-authorization>")
+    .replace(/\b(?:Basic|NTLM|Negotiate|ApiKey)\s+[^\s,;}"'\\]+/gi, "<redacted-authorization>")
     .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, "<redacted>")
     .replace(/\b(?:Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi, "<redacted-cookie>")
     .replace(/\b(?:AccountKey|SharedAccessKey|Ocp-Apim-Subscription-Key|x-functions-key)\s*=\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^;\s,}]+)/gi, "<redacted-key>")

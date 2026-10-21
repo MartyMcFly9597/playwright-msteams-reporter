@@ -78,6 +78,25 @@ describe("health card rendering", () => {
     expect(sanitizeHealthText("Response: 500; file.csv: value")).toContain("Response: 500; file.csv: value");
   });
 
+  it("redacts secrets after unquoted values and in escaped JSON fragments", () => {
+    const cases = [
+      [String.raw`{"token":null,"password":"correct horse battery","other":"visible"}`, "correct horse battery"],
+      [String.raw`{"authorization":{"scheme":"Custom","secret":"part1 part2"}}`, "part1 part2"],
+      [String.raw`Log: {\"password\":\"secret1\"} {"password":"secret2"}`, "secret2"],
+      [String.raw`Error: '{\"password\":\"secret1\"}' in {"password":"secret2"}`, "secret2"],
+    ];
+
+    for (const [input, secret] of cases) {
+      expect(sanitizeHealthText(input)).not.toContain(secret);
+    }
+    expect(sanitizeHealthText(cases[2][0])).not.toContain("secret1");
+    expect(sanitizeHealthText(cases[3][0])).not.toContain("secret1");
+    expect(sanitizeHealthText(cases[0][0])).toContain("visible");
+    expect(sanitizeHealthText("SRI digest mismatch for main.js")).toContain("SRI digest mismatch for main.js");
+    expect(sanitizeHealthText("waiting for token refresh")).toContain("waiting for token refresh");
+    expect(sanitizeHealthText("Digest algorithm=MD5, username=alice, response=credential-proof")).not.toContain("credential-proof");
+  });
+
   it("redacts escaped quotes in secrets and home paths across platforms", () => {
     const sanitized = sanitizeHealthText(String.raw`{"password":"part1\"part2","url":"amqp://user:secret@broker.acme.example"} C:\Users\alice\work /Users/bob/work /home/carol/work C:/Users/dave/work`);
     expect(sanitized).not.toContain("part2");
