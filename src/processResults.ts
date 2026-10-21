@@ -101,8 +101,8 @@ function addResultsLink(
   options: MsTeamsReporterOptions
 ) {
   if (!link) return;
-  const url = typeof link === "string" ? link : link.call(options);
-  if (url && typeof url === "string") {
+  const url = resolveLinkUrl(link, options);
+  if (url) {
     adaptiveCard.actions.push({ type: "Action.OpenUrl", title, url });
   }
 }
@@ -118,7 +118,8 @@ function resolveLinkUrl(
   if (typeof url !== "string" || !url.trim()) return undefined;
   try {
     const parsedUrl = new URL(url);
-    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") return undefined;
+    if ((parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") ||
+      parsedUrl.pathname.split("/").some((segment) => segment.toLowerCase() === "undefined")) return undefined;
     return parsedUrl.href;
   } catch {
     return undefined;

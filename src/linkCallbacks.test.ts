@@ -47,4 +47,29 @@ describe("result link callback receivers", () => {
         : []),
     ]);
   });
+
+  it.each([
+    "relative/path",
+    "   ",
+    "javascript:alert(1)",
+    "https://acme.example/undefined/undefined/actions/runs/undefined",
+  ])("omits invalid results links returned as %s", async (invalidUrl) => {
+    jest.spyOn(console, "log").mockImplementation();
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, text: async () => "1" });
+    global.fetch = fetchMock;
+    const suite = {
+      allTests: () => [{}],
+      suites: [{ allTests: () => [{ outcome: () => "unexpected" }] }],
+    } as unknown as Suite;
+
+    await processResults(suite, {
+      webhookUrl: "https://acme.example/webhook",
+      linkToResultsUrl: () => invalidUrl,
+      linkUrlOnFailure: () => invalidUrl,
+    });
+
+    const actions = JSON.parse(fetchMock.mock.calls[0][1].body).attachments[0].content.actions;
+    expect(actions).toEqual([]);
+    expect(JSON.stringify(actions)).not.toContain(invalidUrl);
+  });
 });
