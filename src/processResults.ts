@@ -1,4 +1,4 @@
-import { Suite } from "@playwright/test/reporter";
+import { FullResult, Suite } from "@playwright/test/reporter";
 import { MsTeamsReporterOptions } from ".";
 import {
   createTableRow,
@@ -148,7 +148,8 @@ export const processResults = async (
   suite: Suite | undefined,
   options: MsTeamsReporterOptions,
   durationMs?: number,
-  gitAuthors?: string[]
+  gitAuthors?: string[],
+  runStatus: FullResult["status"] = "passed"
 ) => {
   resolveWebhookTimeout(options.webhookTimeoutMs);
   if (!options.webhookUrl) {
@@ -167,7 +168,7 @@ export const processResults = async (
   }
   const adaptiveCard = structuredClone(BaseAdaptiveCard);
   const totalStatus = getTotalStatus(suite.suites);
-  const isSuccess = totalStatus.failed === 0;
+  const isSuccess = runStatus === "passed" && totalStatus.failed === 0;
   if (isSuccess && !options.notifyOnSuccess) {
     logSkippedReport("No failed tests, skipping notification", options);
     return;
@@ -187,14 +188,14 @@ export const processResults = async (
         type: "TextBlock",
         size: "Large",
         weight: "Bolder",
-        text: getNotificationTitle(totalStatus),
-        color: getNotificationColor(totalStatus),
+        text: runStatus === "passed" ? getNotificationTitle(totalStatus) : `Test run ${runStatus === "timedout" ? "timed out" : runStatus}`,
+        color: runStatus === "passed" ? getNotificationColor(totalStatus) : "Attention",
       },
       table,
     ] as any[],
     bleed: true,
     backgroundImage: {
-      url: getNotificationBackground(totalStatus),
+    url: runStatus === "passed" ? getNotificationBackground(totalStatus) : getNotificationBackground({ ...totalStatus, failed: Math.max(1, totalStatus.failed) }),
       fillMode: "RepeatHorizontally",
     },
   };

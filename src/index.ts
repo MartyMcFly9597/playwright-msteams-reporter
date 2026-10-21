@@ -113,18 +113,20 @@ export default class MsTeamsReporter implements Reporter {
     if (this.options.enableDuration) {
       this.startTime = Date.now();
     }
-    // Capture git authors from metadata if enabled
-    if (this.options.mentionAuthors && config?.metadata?.git) {
-      // Playwright 1.51+ git metadata
+    if (this.options.mentionAuthors && config?.metadata) {
       const authors: string[] = [];
-      if (Array.isArray(config.metadata.git.commits)) {
-        for (const commit of config.metadata.git.commits) {
-          if (commit.author?.email) {
-            authors.push(commit.author.email);
+      const metadata = config.metadata as FullConfig["metadata"] & {
+        gitCommit?: { author?: { email?: string } };
+      };
+      if (metadata.gitCommit?.author?.email) authors.push(metadata.gitCommit.author.email);
+      if (metadata.git) {
+        if (Array.isArray(metadata.git.commits)) {
+          for (const commit of metadata.git.commits) {
+            if (commit.author?.email) authors.push(commit.author.email);
           }
+        } else if (metadata.git.commit?.author?.email) {
+          authors.push(metadata.git.commit.author.email);
         }
-      } else if (config.metadata.git.commit?.author?.email) {
-        authors.push(config.metadata.git.commit.author.email);
       }
       this.gitAuthors = Array.from(new Set(authors));
     }
@@ -152,11 +154,11 @@ export default class MsTeamsReporter implements Reporter {
     process.stderr.write(redactWebhookUrl(text, this.options.webhookUrl));
   }
 
-  async onEnd(_: FullResult) {
+  async onEnd(result: FullResult) {
     let durationMs: number | undefined = undefined;
     if (this.options.enableDuration && this.startTime) {
       durationMs = Date.now() - this.startTime;
     }
-    await processResults(this.suite, this.options, durationMs, this.gitAuthors);
+    await processResults(this.suite, this.options, durationMs, this.gitAuthors, result.status);
   }
 }
