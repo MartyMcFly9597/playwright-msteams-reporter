@@ -5,21 +5,24 @@ on:
       - published
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install npm dependencies
         run: npm ci
 
       - name: Run tests
-        run: npm run test:jest
+        run: npm run test:jest -- --runInBand
 
       - name: Verify packed package
         run: npm run test:package
@@ -31,8 +34,8 @@ jobs:
       (github.event_name == 'release' && github.event.release.prerelease == false) ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
           cache: npm
