@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 ## [0.2.0] - 2026-10-20
 
 - Add stable `healthReporter`, `healthCapture`, and `models` package subpaths with TypeScript declaration mappings, keeping build output paths internal.
+- Migration: replace imports from `dist/healthReporter` and `dist/healthCapture` with the stable `healthReporter` and `healthCapture` package subpaths.
 
 ## [0.1.0] - 2026-10-19
 
