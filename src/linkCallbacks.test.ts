@@ -72,4 +72,69 @@ describe("result link callback receivers", () => {
     expect(actions).toEqual([]);
     expect(JSON.stringify(actions)).not.toContain(invalidUrl);
   });
+
+  it("preserves valid URLs containing an undefined path segment across link options", async () => {
+    jest.spyOn(console, "log").mockImplementation();
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, text: async () => "1" });
+    global.fetch = fetchMock;
+    const validUrl = "https://docs.acme.example/js/undefined/index.html";
+    const suite = {
+      allTests: () => [{}],
+      suites: [{ allTests: () => [{ outcome: () => "unexpected" }] }],
+    } as unknown as Suite;
+
+    await processResults(suite, {
+      webhookUrl: "https://acme.example/webhook",
+      linkToResultsUrl: validUrl,
+      linkToResultsText: "results",
+      linkUrlOnFailure: validUrl,
+      links: [{ text: "docs", url: validUrl }],
+    });
+
+    const actions = JSON.parse(fetchMock.mock.calls[0][1].body).attachments[0].content.actions;
+    expect(actions).toEqual([
+      { type: "Action.OpenUrl", title: "results", url: validUrl },
+      { type: "Action.OpenUrl", title: "docs", url: validUrl },
+      { type: "Action.OpenUrl", title: "View failed tests", url: validUrl },
+    ]);
+  });
+
+  it("defaults a missing primary results action title when processResults is called directly", async () => {
+    jest.spyOn(console, "log").mockImplementation();
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, text: async () => "1" });
+    global.fetch = fetchMock;
+    const suite = {
+      allTests: () => [{}],
+      suites: [{ allTests: () => [{ outcome: () => "expected" }] }],
+    } as unknown as Suite;
+
+    await processResults(suite, {
+      webhookUrl: "https://acme.example/webhook",
+      notifyOnSuccess: true,
+      linkToResultsUrl: "https://docs.acme.example/results",
+    });
+
+    const actions = JSON.parse(fetchMock.mock.calls[0][1].body).attachments[0].content.actions;
+    expect(actions[0].title).toBe("View test results");
+  });
+
+  it("omits a primary results action with an empty title", async () => {
+    jest.spyOn(console, "log").mockImplementation();
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, text: async () => "1" });
+    global.fetch = fetchMock;
+    const suite = {
+      allTests: () => [{}],
+      suites: [{ allTests: () => [{ outcome: () => "expected" }] }],
+    } as unknown as Suite;
+
+    await processResults(suite, {
+      webhookUrl: "https://acme.example/webhook",
+      notifyOnSuccess: true,
+      linkToResultsUrl: "https://docs.acme.example/results",
+      linkToResultsText: "   ",
+    });
+
+    const actions = JSON.parse(fetchMock.mock.calls[0][1].body).attachments[0].content.actions;
+    expect(actions).toEqual([]);
+  });
 });
