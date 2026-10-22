@@ -169,11 +169,11 @@ void [original, health, capture];
 import MsTeamsReporter, { type MsTeamsReporterOptions } from "@martymcfly9597/playwright-msteams-reporter";
 import HealthReporter, { type HealthReporterOptions } from "@martymcfly9597/playwright-msteams-reporter/healthReporter";
 const reporterOptions: MsTeamsReporterOptions = {};
-type HealthOptions = HealthReporterOptions;
+const healthOptions: HealthReporterOptions = {};
 const reporter = new MsTeamsReporter();
 const health = new HealthReporter();
 class ExtendedReporter extends MsTeamsReporter {}
-void [reporterOptions, reporter, health, ExtendedReporter];
+void [reporterOptions, healthOptions, reporter, health, ExtendedReporter];
 `);
 }
 
