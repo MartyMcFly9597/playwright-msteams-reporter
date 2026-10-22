@@ -160,6 +160,54 @@ describe("health card rendering", () => {
     expect(sanitizeHealthText("Token configuration failed", 300, undefined, undefined, false)).toBe("Token configuration failed");
   });
 
+  it("redacts attached suffixes after brace-prefixed credentials", () => {
+    for (const input of ["DB_PASSWORD={FIRST}PRIVATE_SUFFIX", "DB_PASSWORD=[FIRST]PRIVATE_SUFFIX"]) {
+      expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+    }
+  });
+
+  it("continues scanning after scalar values in separate array objects", () => {
+    for (const token of [null, true, false, 42, -1.5]) {
+      const input = JSON.stringify([{ token }, { password: "correct horse battery", other: "visible" }]);
+      for (const value of [input, JSON.stringify(input)]) {
+        const sanitized = sanitizeHealthText(value, 1000, undefined, undefined, false);
+        expect(sanitized).not.toContain("horse");
+        expect(sanitized).not.toContain("battery");
+        expect(sanitized).toContain("visible");
+      }
+    }
+  });
+
+  it("redacts case-insensitive and padded Token credentials", () => {
+    const credential = "9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b";
+    for (const scheme of ["token", "tOkEn", "Token"]) {
+      for (const suffix of ["", "=", "==", ".~+/=="]) {
+        expect(sanitizeHealthText(`${scheme} ${credential}${suffix}`, 1000, undefined, undefined, false))
+          .not.toContain(credential);
+      }
+    }
+  });
+
+  it("preserves Basic prose while redacting Basic credentials", () => {
+    expect(sanitizeHealthText("Basic configuration failed", 1000, undefined, undefined, false))
+      .toBe("Basic configuration failed");
+    const credential = Buffer.from("alice:synthetic-password").toString("base64");
+    expect(sanitizeHealthText(`Basic ${credential}`, 1000, undefined, undefined, false)).not.toContain(credential);
+  });
+
+  it("preserves short field names outside SAS parameter contexts", () => {
+    const ordinaryFields = "sv=version se=expiry sp=permissions sr=resource";
+
+    expect(sanitizeHealthText(ordinaryFields, 1000, undefined, undefined, false)).toBe(ordinaryFields);
+    expect(sanitizeHealthText('{"sp":"visible","sr":"visible"}', 1000, undefined, undefined, false))
+      .toContain('"sp":"visible"');
+    const sasParameters = sanitizeHealthText("?sv=PRIVATE_VERSION&se=PRIVATE_EXPIRY&sp=PRIVATE_PERMISSIONS&sr=PRIVATE_RESOURCE;sig=PRIVATE_SIGNATURE", 1000, undefined, undefined, false);
+    expect(sasParameters).not.toContain("PRIVATE_");
+    const signedUrl = sanitizeHealthText("https://acme.example/file?sp=PRIVATE_PERMISSIONS&sig=PRIVATE_SIGNATURE", 1000, undefined, undefined, false);
+    expect(signedUrl).toContain("https://acme.example/file");
+    expect(signedUrl).not.toContain("PRIVATE_");
+  });
+
   it("redacts escaped quotes in secrets and home paths across platforms", () => {
     const sanitized = sanitizeHealthText(String.raw`{"password":"part1\"part2","url":"amqp://user:secret@broker.acme.example"} C:\Users\alice\work /Users/bob/work /home/carol/work C:/Users/dave/work`);
     expect(sanitized).not.toContain("part2");

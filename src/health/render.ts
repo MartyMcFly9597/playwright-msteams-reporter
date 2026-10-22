@@ -63,7 +63,7 @@ const sensitiveFields = [
   "ocp-apim-subscription-key", "x-functions-key", "x-api-key", "client_secret", "client-secret",
   "db_password", "db-password", "access_token", "refresh_token", "id_token", "set-cookie",
   "sharedaccesskey", "accountkey", "authorization", "signature", "password", "passwd", "secret",
-  "cookie", "api-key", "api_key", "token", "pwd", "sig", "sv", "se", "sp", "sr", "skoid", "sktid", "skt", "ske", "sks", "skv",
+  "cookie", "api-key", "api_key", "token", "pwd", "sig",
 ];
 const sensitiveFieldStart = new RegExp(String.raw`(^|[^\w-])((?:\\)*)(["'\x60]?)(${sensitiveFields.join("|")})((?:\\)*)\3((?:\\)*)\s*[:=]\s*((?:\\)*)(["'\x60])?`, "gi");
 const homePathPattern = /\b[A-Z]:(?:[\\/]+)Users[\\/]+[^\\/"'\r\n]+|\/(?:Users|home)\/[^/"'\r\n]+/gi;
@@ -129,8 +129,16 @@ function findStructuredSecretEnd(value: string, start: number, baseBackslashes =
   return value.length;
 }
 
-function findUnquotedSecretEnd(value: string, start: number, serializedDepth: number): number {
-  if (value[start] === "[" || value[start] === "{") return findStructuredSecretEnd(value, start, serializedDepth);
+function findUnquotedSecretEnd(value: string, start: number, serializedDepth: number, quotedField = false): number {
+  if (quotedField) {
+    const scalar = /^(?:null|true|false|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)(?=\s*[,}\]])/.exec(value.slice(start));
+    if (scalar) return start + scalar[0].length;
+  }
+  if (value[start] === "[" || value[start] === "{") {
+    const structuredEnd = findStructuredSecretEnd(value, start, serializedDepth);
+    if (structuredEnd === value.length || /[\s,}\]"'\\]/.test(value[structuredEnd])) return structuredEnd;
+    return findUnquotedSecretEnd(value, structuredEnd, serializedDepth);
+  }
   for (let index = start; index < value.length; index += 1) {
     if (/\s/.test(value[index])) return index;
     if (value[index] === "," && /^,\s*(?:\\)?["'][^"'\r\n]+(?:\\)?["']\s*:/.test(value.slice(index))) return index;
@@ -138,10 +146,10 @@ function findUnquotedSecretEnd(value: string, start: number, serializedDepth: nu
   return value.length;
 }
 
-function findSecretEnd(value: string, start: number, quote?: string, serializedDepth = 0): number {
+function findSecretEnd(value: string, start: number, quote?: string, serializedDepth = 0, quotedField = false): number {
   return quote
     ? findQuotedSecretEnd(value, start, quote, serializedDepth)
-    : findUnquotedSecretEnd(value, start, serializedDepth);
+    : findUnquotedSecretEnd(value, start, serializedDepth, quotedField);
 }
 
 function redactSensitiveFields(value: string): string {
@@ -152,7 +160,7 @@ function redactSensitiveFields(value: string): string {
   while ((match = sensitiveFieldStart.exec(value)) !== null) {
     const serializedDepth = Math.max(match[2].length, match[5].length, match[6].length, match[7].length);
     const quote = match[8];
-    const valueEnd = serializedDepth >= 3 ? value.length : findSecretEnd(value, sensitiveFieldStart.lastIndex, quote, serializedDepth);
+    const valueEnd = serializedDepth >= 3 ? value.length : findSecretEnd(value, sensitiveFieldStart.lastIndex, quote, serializedDepth, Boolean(match[3]));
     output += `${value.slice(copiedThrough, match.index)}${match[1]}${match[2]}${match[3]}${match[4]}${match[3]}: <redacted>`;
     copiedThrough = valueEnd;
     sensitiveFieldStart.lastIndex = valueEnd;
@@ -166,14 +174,19 @@ function builtinSanitize(value: string, webhookUrl?: string): string {
     .replace(/\bAuthorization\s*:\s*[^\r\n]+/gi, "Authorization: <redacted>")
     .replace(/\bDigest\s+(?=[a-z][\w-]*\*?\s*=)[^\r\n]*/gi, "<redacted-authorization>")
     .replace(/\bBearer\s+[^\s,;}"'\\]+/gi, "Bearer <redacted>")
-    .replace(/\b(?:Basic|NTLM|Negotiate|ApiKey)\s+[^\s,;}"'\\]+/gi, "<redacted-authorization>")
+    .replace(/\bBasic\s+([A-Za-z0-9+/]+=*)(?=$|[\s,;}"'\\])/gi, (match, credential: string) => {
+      const decoded = Buffer.from(credential, "base64");
+      return decoded.includes(58) && decoded.toString("base64").replace(/=+$/, "") === credential.replace(/=+$/, "")
+        ? "<redacted-authorization>" : match;
+    })
+    .replace(/\b(?:NTLM|Negotiate|ApiKey)\s+[^\s,;}"'\\]+/gi, "<redacted-authorization>")
     .replace(/\b((?:credential|access token))\s*:\s*Token\s+[^\s,;}"'\\]+/gi, "$1: <redacted-authorization>")
-    .replace(/\bToken\s+[A-Za-z0-9_-]{24,}(?=$|[\s,;}"'\\])/g, "Token <redacted>")
+    .replace(/\bToken\s+[A-Za-z0-9._~+/-]{24,}=*(?=$|[\s,;}"'\\])/gi, "Token <redacted>")
     .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, "<redacted>")
     .replace(/\b(?:Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi, "<redacted-cookie>")
     .replace(/\b(?:AccountKey|SharedAccessKey|Ocp-Apim-Subscription-Key|x-functions-key)\s*=\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^;\s,}]+)/gi, "<redacted-key>")
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/gi, sanitizeUrl)
-    .replace(/(?:^|[?&;\s])(sv|se|sp|sr|sig|signature|skoid|sktid|skt|ske|sks|skv)=([^&#;\s]+)/gi, (_match, key: string) => `${key}=<redacted>`)
+    .replace(/([?&;])(sv|se|sp|sr|sig|signature|skoid|sktid|skt|ske|sks|skv)=([^&#;\s]+)/gi, (_match, prefix: string, key: string) => `${prefix}${key}=<redacted>`)
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "<redacted-email>")
     .replace(homePathPattern, "<redacted-home>")
     .replace(/[\u0000-\u0009\u000b-\u001f\u007f\u2028\u2029]+/g, " ")
