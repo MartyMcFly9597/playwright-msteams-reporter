@@ -89,6 +89,7 @@ function sanitizeUrl(value: string): string {
 function isDelimiterQuote(value: string, index: number, quote: string, baseBackslashes: number): boolean {
   if (value[index] !== quote) return false;
   const backslashes = countBackslashesBefore(value, index);
+  if (quote !== '"') return backslashes % 2 === 0;
   const cycle = 2 * (baseBackslashes + 1);
   return backslashes >= baseBackslashes && (backslashes - baseBackslashes) % cycle === 0;
 }
@@ -106,16 +107,8 @@ function countBackslashesBefore(value: string, index: number): number {
   return count;
 }
 
-function findStructuredSecretEnd(value: string, start: number): number {
+function findStructuredSecretEnd(value: string, start: number, baseBackslashes = 0): number {
   const closing: string[] = [value[start] === "[" ? "]" : "}"];
-  let baseBackslashes = 0;
-  for (let index = start + 1; index < value.length; index += 1) {
-    if (value[index] === '"') {
-      baseBackslashes = countBackslashesBefore(value, index);
-      break;
-    }
-    if (value[index] === "}" || value[index] === "]") break;
-  }
   let quote: string | undefined;
   for (let index = start + 1; index < value.length; index += 1) {
     const character = value[index];
@@ -136,8 +129,8 @@ function findStructuredSecretEnd(value: string, start: number): number {
   return value.length;
 }
 
-function findUnquotedSecretEnd(value: string, start: number): number {
-  if (value[start] === "[" || value[start] === "{") return findStructuredSecretEnd(value, start);
+function findUnquotedSecretEnd(value: string, start: number, serializedDepth: number): number {
+  if (value[start] === "[" || value[start] === "{") return findStructuredSecretEnd(value, start, serializedDepth);
   for (let index = start; index < value.length; index += 1) {
     if (/\s/.test(value[index])) return index;
     if (value[index] === "," && /^,\s*(?:\\)?["'][^"'\r\n]+(?:\\)?["']\s*:/.test(value.slice(index))) return index;
@@ -146,7 +139,9 @@ function findUnquotedSecretEnd(value: string, start: number): number {
 }
 
 function findSecretEnd(value: string, start: number, quote?: string, serializedDepth = 0): number {
-  return quote ? findQuotedSecretEnd(value, start, quote, serializedDepth) : findUnquotedSecretEnd(value, start);
+  return quote
+    ? findQuotedSecretEnd(value, start, quote, serializedDepth)
+    : findUnquotedSecretEnd(value, start, serializedDepth);
 }
 
 function redactSensitiveFields(value: string): string {
