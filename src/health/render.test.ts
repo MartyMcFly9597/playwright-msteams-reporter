@@ -104,6 +104,8 @@ describe("health card rendering", () => {
     }));
     const separatedByProse = String.raw`Log: {\"password\":\"secret1\"} failed: {"password":"secret2"}`;
 
+    expect(sanitizeHealthText(embeddedBoundary)).not.toContain("PRIVATE_SUFFIX");
+    expect(sanitizeHealthText(embeddedBoundary)).toContain("visible");
     expect(sanitizeHealthText(separatedByProse)).not.toContain("secret1");
     expect(sanitizeHealthText(separatedByProse)).not.toContain("secret2");
   });
@@ -133,6 +135,16 @@ describe("health card rendering", () => {
     }
   });
 
+  it("does not leak array suffixes after a quoted value ending in a backslash", () => {
+    const value = JSON.stringify({ authorization: ["prefix\\", "PRIVATE]TAIL"], other: "visible" });
+
+    for (const input of [value, JSON.stringify(value)]) {
+      const sanitized = sanitizeHealthText(input);
+      expect(sanitized).not.toContain("TAIL");
+      expect(sanitized).toContain("visible");
+    }
+  });
+
   it("redacts Digest username-star directives", () => {
     expect(sanitizeHealthText("Digest username*=UTF-8''alice, realm=api, response=credential-proof", 300, undefined, undefined, false))
       .not.toContain("credential-proof");
@@ -145,6 +157,7 @@ describe("health card rendering", () => {
       .not.toContain("standalone-credential");
     expect(sanitizeHealthText("waiting for token refresh", 300, undefined, undefined, false)).toContain("waiting for token refresh");
     expect(sanitizeHealthText("Token refresh failed", 300, undefined, undefined, false)).toContain("Token refresh failed");
+    expect(sanitizeHealthText("Token refresh failed", 300, undefined, undefined, false)).toBe("Token refresh failed");
   });
 
   it("redacts escaped quotes in secrets and home paths across platforms", () => {

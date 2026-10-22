@@ -86,17 +86,16 @@ function sanitizeUrl(value: string): string {
   }
 }
 
-function isSecretValueEnd(value: string, index: number, quote: string, escapedQuoteBackslashes: number): boolean {
+function isDelimiterQuote(value: string, index: number, quote: string, baseBackslashes: number): boolean {
   if (value[index] !== quote) return false;
-  let backslashes = 0;
-  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) backslashes += 1;
-  if (backslashes % 2 === 0) return true;
-  return escapedQuoteBackslashes > 0 && backslashes === escapedQuoteBackslashes;
+  const backslashes = countBackslashesBefore(value, index);
+  const cycle = 2 * (baseBackslashes + 1);
+  return backslashes >= baseBackslashes && (backslashes - baseBackslashes) % cycle === 0;
 }
 
-function findQuotedSecretEnd(value: string, start: number, quote: string, escapedQuoteBackslashes: number): number {
+function findQuotedSecretEnd(value: string, start: number, quote: string, baseBackslashes: number): number {
   for (let index = start; index < value.length; index += 1) {
-    if (isSecretValueEnd(value, index, quote, escapedQuoteBackslashes)) return index + 1;
+    if (isDelimiterQuote(value, index, quote, baseBackslashes)) return index + 1;
   }
   return value.length;
 }
@@ -109,26 +108,23 @@ function countBackslashesBefore(value: string, index: number): number {
 
 function findStructuredSecretEnd(value: string, start: number): number {
   const closing: string[] = [value[start] === "[" ? "]" : "}"];
-  let escapedQuoteBackslashes: number | undefined;
+  let baseBackslashes = 0;
   for (let index = start + 1; index < value.length; index += 1) {
     if (value[index] === '"') {
-      escapedQuoteBackslashes = countBackslashesBefore(value, index);
+      baseBackslashes = countBackslashesBefore(value, index);
       break;
     }
     if (value[index] === "}" || value[index] === "]") break;
   }
-  const delimiterQuoteBackslashes = escapedQuoteBackslashes ?? 0;
   let quote: string | undefined;
   for (let index = start + 1; index < value.length; index += 1) {
     const character = value[index];
     if (quote) {
-      if (character === quote) {
-        if (countBackslashesBefore(value, index) === delimiterQuoteBackslashes) quote = undefined;
-      }
+      if (isDelimiterQuote(value, index, quote, baseBackslashes)) quote = undefined;
       continue;
     }
     if (character === '"' || character === "'" || character === "`") {
-      if (countBackslashesBefore(value, index) === delimiterQuoteBackslashes) quote = character;
+      if (isDelimiterQuote(value, index, character, baseBackslashes)) quote = character;
     }
     else if (character === "[") closing.push("]");
     else if (character === "{") closing.push("}");
@@ -150,8 +146,7 @@ function findUnquotedSecretEnd(value: string, start: number): number {
 }
 
 function findSecretEnd(value: string, start: number, quote?: string, serializedDepth = 0): number {
-  const escapedQuoteBackslashes = serializedDepth > 0 ? 2 ** serializedDepth - 1 : 0;
-  return quote ? findQuotedSecretEnd(value, start, quote, escapedQuoteBackslashes) : findUnquotedSecretEnd(value, start);
+  return quote ? findQuotedSecretEnd(value, start, quote, serializedDepth) : findUnquotedSecretEnd(value, start);
 }
 
 function redactSensitiveFields(value: string): string {
