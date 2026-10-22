@@ -16,13 +16,13 @@ Here you can see an example card for failed test results:
 
 ## Prerequisites
 
-To use this reporter, you must have a Microsoft Teams webhook URL. You can create a webhook URL using the Microsoft Teams Power Automate connector or the Microsoft Teams incoming webhook functionality.
+To use this reporter, provide a webhook URL from a Power Automate workflow using the **When a Teams webhook request is received** trigger.
 
-As the incoming webhook functionality will stop working on October 1, 2024 (extended to December 2025), it is recommended to use the Power Automate connector functionality.
+The legacy Office 365 Connector incoming webhooks have been retired. This does not retire webhook-triggered Workflows; use the Power Automate workflow trigger for new integrations.
 
 > **Important**: You need to copy the `webhook URL` from the configuration, as you will need it to configure the reporter.
 
-> **Info**: The [Retirement of Office 365 connectors within Microsoft Teams](https://devblogs.microsoft.com/microsoft365dev/retirement-of-office-365-connectors-within-microsoft-teams/) article provides more information on the retirement of the incoming webhook functionality.
+> **Info**: See Microsoft's [retirement notice for Office 365 Connectors](https://devblogs.microsoft.com/microsoft365dev/retirement-of-office-365-connectors-within-microsoft-teams/) for details about the legacy connector retirement.
 
 ### Microsoft Teams Power Automate webhook
 
@@ -44,12 +44,6 @@ To create a Power Automate webhook for Microsoft Teams, you can follow these ste
 > When using the PowerAutomate template, a template footer will automatically be included like: `<name> used a Workflow template to send this card. Get template`.
 > You can remove this footer by creating a copy of the flow, and use the new one instead.
 > You can find more information about this procedure in the following blog post: [How to remove "<Name> used a Workflow template to send this card. Get template"](https://docs.hetrixtools.com/microsoft-teams-how-to-remove-name-used-a-workflow-template-to-send-this-card-get-template/).
-
-### Microsoft Teams incoming webhook (retiring October 1, 2024)
-
-To use this reporter, you need to create an incoming webhook for your Microsoft Teams channel. You can find more information on how to do this in the [Microsoft documentation](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook?tabs=newteams%2Cdotnet#create-an-incoming-webhook).
-
-> **Important**: You need to copy the `webhook URL` from the configuration, as you will need it to configure the reporter.
 
 ## Installation
 
@@ -138,9 +132,9 @@ The reporter supports the following configuration options:
 | `quiet`                | Suppress test output forwarding and success chatter             | `boolean`                | `false`  | `false`                                        |
 | `debug`                | Show debug information                                          | `boolean`                | `false`  | `false`                                        |
 | `shouldRun`            | Conditional reporting                                           | ` Suite => boolean`      | `false`  | `true`                                         |
-| `reportOnEmpty`        | Prevents sending a report when no tests are run                 | `boolean`                | `false`  | `false`                                        |
+| `reportOnEmpty`        | Send a report when no tests are run                              | `boolean`                | `false`  | `false`                                        |
 | `enableDuration`       | Show the test run duration                                      | `boolean`                | `false`  | `false`                                        |
-| `mentionAuthors`       | Use git metadata to mention authors of the commit or PR         | `boolean`                | `false`  | `false`                                        |
+| `mentionAuthors`       | Use available Playwright git metadata to mention commit authors on failure | `boolean`       | `false`  | `false`                                        |
 
 ### Optional Test Run Health Report
 
@@ -163,6 +157,9 @@ signal evidence, runner errors, or an explicitly enabled empty-run report. A
 clean signal-free run produces no follow-up. Its notification gates are
 independent of the original reporter. Submission order is sequential; the
 receiving service may still display messages in a different order.
+
+The health reporter always sends the same Adaptive Card payload format; its
+`webhookType` option is validated for compatibility but does not change the card.
 
 To roll back the optional health report, remove its second reporter entry. To stop automatic evidence capture without changing reporting, remove or disable the consumer fixture that calls `captureEnvSignals()`. Removing `record()` calls stops only manually added signals; the original reporter remains independent.
 
@@ -337,7 +334,7 @@ Health reporter options:
 | `reportOnEmpty` | `false` | Allows a card for an empty run; runner errors are reported even when no suite began. |
 | `shouldRun` | always | Optional suite predicate. A false result suppresses this health card only. |
 | `quiet` / `debug` | `false` / `false` | `quiet` suppresses the one-line health summary; `debug` logs the card after sanitization. Neither forwards test stdout/stderr. |
-| `webhookUrl`, `webhookUrlEnv`, `webhookTimeoutMs`, `webhookType` | Same as the original reporter | Destination precedence, timeout validation, and Power Automate/Teams delivery are shared with the original reporter. |
+| `webhookUrl`, `webhookUrlEnv`, `webhookTimeoutMs`, `webhookType` | Same as the original reporter | Destination precedence and timeout validation are shared with the original reporter. `webhookType` is validated but does not change the health card payload. |
 
 ### Failure-text patterns
 
@@ -460,7 +457,7 @@ filter; avoid putting webhook secrets in published configuration artifacts.
 
 ### Mention users
 
-With the `mentionOnFailure` option, you can mention users in the Microsoft Teams channel when a test fails. You can provide an array of users to mention.
+With the `mentionOnFailure` option, you can mention users in the Microsoft Teams channel when a test fails. Provide email addresses as a comma-separated string.
 
 ### Mention users with the Power Automate connector
 
@@ -473,7 +470,7 @@ You can mention users by providing their email addresses when using the Power Au
 }
 ```
 
-### Mention users with the Microsoft Teams Incoming Webhook
+### Mention users with a Teams webhook
 
 The format can be either the full name and email (`"Full name <email>"`) or just the email address (`email`). The reporter will replace the `{mentions}` placeholder in the `mentionOnFailureText` with the mentioned users.
 
