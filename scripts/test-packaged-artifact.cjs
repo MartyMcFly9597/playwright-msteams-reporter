@@ -165,15 +165,27 @@ const health: HealthReporterOptions = { webhookUrlEnv: "PACKED_WEBHOOK", webhook
 const capture: EnvSignalCaptureOptions = { includeHosts: ["app.acme.example"] };
 void [original, health, capture];
 `);
+  writeFileSync(path.join(tests, "types-esm-consumer.mts"), `
+import MsTeamsReporter, { type MsTeamsReporterOptions } from "@martymcfly9597/playwright-msteams-reporter";
+import HealthReporter, { type HealthReporterOptions } from "@martymcfly9597/playwright-msteams-reporter/healthReporter";
+const reporterOptions: MsTeamsReporterOptions = {};
+type HealthOptions = HealthReporterOptions;
+const reporter = new MsTeamsReporter();
+const health = new HealthReporter();
+class ExtendedReporter extends MsTeamsReporter {}
+void [reporterOptions, reporter, health, ExtendedReporter];
+`);
 }
 
 function configSource({ directory, format, webhookType, includeHealth, includeTypes, legacyFailure, largeFailure, timeoutMs, outputFile }) {
   const consumer = path.join(directory, "node_modules", "@martymcfly9597", "playwright-msteams-reporter", "dist");
+  const mainReporter = format === "esm" ? "@martymcfly9597/playwright-msteams-reporter" : path.join(consumer, "index.js");
+  const healthReporter = format === "esm" ? "@martymcfly9597/playwright-msteams-reporter/healthReporter" : path.join(consumer, "healthReporter.js");
   const reporters = [
-    [path.join(consumer, "index.js"), {
+    [mainReporter, {
       webhookUrlEnv: "PACKED_WEBHOOK", webhookType, title: "Original Results", quiet: false, debug: true, webhookTimeoutMs: timeoutMs,
     }],
-    ...(includeHealth ? [[path.join(consumer, "healthReporter.js"), {
+    ...(includeHealth ? [[healthReporter, {
       webhookUrlEnv: "PACKED_WEBHOOK", webhookType,
       title: largeFailure ? "Release gate Unicode 🚀 ".repeat(100) : "Packed Health",
       maxPayloadBytes: largeFailure ? 4096 : 26000, maxTests: largeFailure ? 100 : 5, quiet: true, webhookTimeoutMs: 5000,
@@ -192,8 +204,8 @@ function configSource({ directory, format, webhookType, includeHealth, includeTy
   if (format === "esm") {
     return `import rootReporter from "@martymcfly9597/playwright-msteams-reporter";\n` +
       `import healthReporter from "@martymcfly9597/playwright-msteams-reporter/healthReporter";\n` +
-      `import captureModule from "@martymcfly9597/playwright-msteams-reporter/healthCapture";\n` +
-      `if (typeof rootReporter !== "function" || typeof healthReporter !== "function" || typeof captureModule.captureEnvSignals !== "function") throw new Error("Packed ESM imports failed");\n` +
+      `import { captureEnvSignals } from "@martymcfly9597/playwright-msteams-reporter/healthCapture";\n` +
+      `if (typeof rootReporter !== "function" || typeof healthReporter !== "function" || typeof captureEnvSignals !== "function") throw new Error("Packed ESM imports failed");\n` +
       `export default ${JSON.stringify(config)};\n`;
   }
   return `module.exports = ${JSON.stringify(config)};\n`;
@@ -250,9 +262,10 @@ async function verifyStalledDelivery({ behavior, directory, receiver, receiverUr
 
 async function verifyTypes(consumer) {
   const compiler = path.join(root, "node_modules", "typescript", "bin", "tsc");
-  await execute(process.execPath, [compiler, "--noEmit", "--strict", "--skipLibCheck", "--module", "Node16",
+  await execute(process.execPath, [compiler, "--noEmit", "--strict", "--module", "Node16",
     "--moduleResolution", "Node16", "--target", "ES2022", "--types", "node",
-    "--typeRoots", path.join(consumer, "node_modules", "@types"), path.join(consumer, "tests", "types-consumer.ts")], {
+    "--typeRoots", path.join(consumer, "node_modules", "@types"), path.join(consumer, "tests", "types-consumer.ts"),
+    path.join(consumer, "tests", "types-esm-consumer.mts")], {
     cwd: consumer, timeout: 30000, windowsHide: true, maxBuffer: 2 * 1024 * 1024,
   });
 }
@@ -262,9 +275,11 @@ async function verifyNodeEsmImports(consumer) {
   const source = [
     `import reporter from "${packageName}";`,
     `import health from "${packageName}/healthReporter";`,
-    `import capture from "${packageName}/healthCapture";`,
+    `import { captureEnvSignals } from "${packageName}/healthCapture";`,
     `import models from "${packageName}/models";`,
-    'if (typeof reporter !== "function" || typeof health !== "function" || typeof capture.captureEnvSignals !== "function" || typeof models !== "object") process.exit(1);',
+    'if (typeof reporter !== "function" || typeof health !== "function" || typeof captureEnvSignals !== "function" || typeof models !== "object") process.exit(1);',
+    'new reporter({ webhookUrl: "", quiet: true });',
+    'new health({ webhookUrl: "", quiet: true });',
   ].join("\n");
   await execute(process.execPath, ["--input-type=module", "-e", source], {
     cwd: consumer, env: childEnvironment(), timeout: 30000, windowsHide: true, maxBuffer: 2 * 1024 * 1024,
@@ -323,7 +338,7 @@ async function main() {
     const [packed] = JSON.parse(packOutput);
     const tarball = path.join(directory, packed.filename);
     const files = new Set(packed.files.map(file => file.path));
-    for (const file of ["dist/index.js", "dist/index.d.ts", "dist/esm/index.mjs", "dist/healthReporter.js", "dist/healthReporter.d.ts", "dist/esm/healthReporter.mjs", "dist/healthCapture.js", "dist/healthCapture.d.ts", "dist/models/index.js"]) {
+    for (const file of ["dist/index.js", "dist/index.d.ts", "dist/esm/index.mjs", "dist/esm/index.d.mts", "dist/healthReporter.js", "dist/healthReporter.d.ts", "dist/esm/healthReporter.mjs", "dist/esm/healthReporter.d.mts", "dist/healthCapture.js", "dist/healthCapture.d.ts", "dist/models/index.js"]) {
       assert(files.has(file), `Packed artifact is missing ${file}`);
     }
     const packageExports = require(path.join(root, "package.json")).exports;
@@ -335,7 +350,7 @@ async function main() {
     assert(!packed.files.some(file => /\.test\.(?:js|d\.ts)$/.test(file.path)), "Packed artifact must not contain compiled tests");
     const allowedRootFiles = new Set(["package.json", "README.md", "CHANGELOG.md", "LICENSE"]);
     const unexpectedFiles = packed.files.filter(file =>
-      !allowedRootFiles.has(file.path) && !/^dist\/.+\.(?:js|mjs|d\.ts)$/.test(file.path)
+      !allowedRootFiles.has(file.path) && !/^dist\/.+\.(?:js|mjs|d\.ts|d\.mts)$/.test(file.path)
     );
     assert.deepEqual(unexpectedFiles, [], "Packed artifact may contain only package metadata/docs/license and runtime/declaration files under dist");
     assert(!packed.files.some(file => /(?:^|\/)(?:playwright-report|test-results|blob-report)(?:\/|$)/.test(file.path)), "Packed artifact must not contain generated Playwright reports, blobs, or test results");
