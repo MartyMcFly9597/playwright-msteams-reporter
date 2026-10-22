@@ -124,7 +124,8 @@ export default class MsTeamsReporter implements Reporter {
           for (const commit of metadata.git.commits) {
             if (commit.author?.email) authors.push(commit.author.email);
           }
-        } else if (metadata.git.commit?.author?.email) {
+        }
+        if (authors.length === 0 && metadata.git.commit?.author?.email) {
           authors.push(metadata.git.commit.author.email);
         }
       }
