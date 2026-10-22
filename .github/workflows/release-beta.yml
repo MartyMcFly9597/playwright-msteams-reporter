@@ -38,11 +38,11 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
-      - name: Install npm dependencies
-        run: npm ci
-
       - name: Install npm CLI with staged publishing support
         run: npm install --global 'npm@^11.15.0'
+
+      - name: Install npm dependencies
+        run: npm ci
 
       - name: Update the package version
         if: github.ref == 'refs/heads/dev'
