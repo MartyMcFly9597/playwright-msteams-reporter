@@ -153,11 +153,11 @@ describe("health card rendering", () => {
   it("redacts Token credentials without redacting ordinary token prose", () => {
     expect(sanitizeHealthText("Request credential: Token synthetic-credential", 300, undefined, undefined, false))
       .not.toContain("synthetic-credential");
-    expect(sanitizeHealthText("Token standalone-credential", 300, undefined, undefined, false))
-      .not.toContain("standalone-credential");
+    expect(sanitizeHealthText("Token 9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b", 300, undefined, undefined, false))
+      .not.toContain("9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b");
     expect(sanitizeHealthText("waiting for token refresh", 300, undefined, undefined, false)).toContain("waiting for token refresh");
     expect(sanitizeHealthText("Token refresh failed", 300, undefined, undefined, false)).toContain("Token refresh failed");
-    expect(sanitizeHealthText("Token refresh failed", 300, undefined, undefined, false)).toBe("Token refresh failed");
+    expect(sanitizeHealthText("Token configuration failed", 300, undefined, undefined, false)).toBe("Token configuration failed");
   });
 
   it("redacts escaped quotes in secrets and home paths across platforms", () => {

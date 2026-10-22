@@ -168,7 +168,7 @@ function builtinSanitize(value: string, webhookUrl?: string): string {
     .replace(/\bBearer\s+[^\s,;}"'\\]+/gi, "Bearer <redacted>")
     .replace(/\b(?:Basic|NTLM|Negotiate|ApiKey)\s+[^\s,;}"'\\]+/gi, "<redacted-authorization>")
     .replace(/\b((?:credential|access token))\s*:\s*Token\s+[^\s,;}"'\\]+/gi, "$1: <redacted-authorization>")
-    .replace(/\bToken\s+(?=[^\s,;}"'\\]{12})[^\s,;}"'\\]+/g, "Token <redacted>")
+    .replace(/\bToken\s+[A-Za-z0-9_-]{24,}(?=$|[\s,;}"'\\])/g, "Token <redacted>")
     .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, "<redacted>")
     .replace(/\b(?:Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi, "<redacted-cookie>")
     .replace(/\b(?:AccountKey|SharedAccessKey|Ocp-Apim-Subscription-Key|x-functions-key)\s*=\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^;\s,}]+)/gi, "<redacted-key>")
