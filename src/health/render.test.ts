@@ -97,6 +97,56 @@ describe("health card rendering", () => {
     expect(sanitizeHealthText("Digest algorithm=MD5, username=alice, response=credential-proof")).not.toContain("credential-proof");
   });
 
+  it("redacts escaped JSON secrets followed by prose and another object", () => {
+    const embeddedBoundary = JSON.stringify(JSON.stringify({
+      password: 'part1"} {PRIVATE_SUFFIX',
+      other: "visible",
+    }));
+    const separatedByProse = String.raw`Log: {\"password\":\"secret1\"} failed: {"password":"secret2"}`;
+
+    expect(sanitizeHealthText(separatedByProse)).not.toContain("secret1");
+    expect(sanitizeHealthText(separatedByProse)).not.toContain("secret2");
+  });
+
+  it("does not treat an embedded escaped quote as the end of a serialized secret", () => {
+    const password = String.raw`part1\"} {PRIVATE_SUFFIX`;
+    const value = JSON.stringify(JSON.stringify({
+      password,
+      other: "visible",
+    }));
+
+    expect(sanitizeHealthText(value)).not.toContain("PRIVATE_SUFFIX");
+    expect(sanitizeHealthText(value)).toContain("visible");
+  });
+
+  it("closes escaped structured values before scanning following secret fields", () => {
+    const value = String.raw`Log: {\"authorization\":{\"scheme\":\"Custom\",\"note\":\"visible\"},\"other\":\"visible\"} {"password":"following-secret"}`;
+    const sanitized = sanitizeHealthText(value);
+
+    expect(sanitized).toContain("visible");
+    expect(sanitized).not.toContain("following-secret");
+  });
+
+  it("redacts unquoted secrets containing closing delimiters", () => {
+    for (const value of ["password=FIRST]PRIVATE_SUFFIX", "password=FIRST}PRIVATE_SUFFIX"]) {
+      expect(sanitizeHealthText(value, 300, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+    }
+  });
+
+  it("redacts Digest username-star directives", () => {
+    expect(sanitizeHealthText("Digest username*=UTF-8''alice, realm=api, response=credential-proof", 300, undefined, undefined, false))
+      .not.toContain("credential-proof");
+  });
+
+  it("redacts Token credentials without redacting ordinary token prose", () => {
+    expect(sanitizeHealthText("Request credential: Token synthetic-credential", 300, undefined, undefined, false))
+      .not.toContain("synthetic-credential");
+    expect(sanitizeHealthText("Token standalone-credential", 300, undefined, undefined, false))
+      .not.toContain("standalone-credential");
+    expect(sanitizeHealthText("waiting for token refresh", 300, undefined, undefined, false)).toContain("waiting for token refresh");
+    expect(sanitizeHealthText("Token refresh failed", 300, undefined, undefined, false)).toContain("Token refresh failed");
+  });
+
   it("redacts escaped quotes in secrets and home paths across platforms", () => {
     const sanitized = sanitizeHealthText(String.raw`{"password":"part1\"part2","url":"amqp://user:secret@broker.acme.example"} C:\Users\alice\work /Users/bob/work /home/carol/work C:/Users/dave/work`);
     expect(sanitized).not.toContain("part2");

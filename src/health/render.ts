@@ -86,42 +86,50 @@ function sanitizeUrl(value: string): string {
   }
 }
 
-function endsEscapedJsonValue(value: string, quoteIndex: number): boolean {
-  const following = value.slice(quoteIndex + 1).trimStart();
-  return /^,\s*(?:\\)?["'][^"'\r\n]+(?:\\)?["']\s*:/.test(following) ||
-    /^(?:\\)?[}\]](?:\\)?["']\s*(?:[,;)]|$)/.test(following) ||
-    /^(?:\\)?[}\]]\s+\{/.test(following) ||
-    /^(?:\\)?[}\]]\s*(?:\\)?["']\s+in\b/i.test(following);
-}
-
-function isSecretValueEnd(value: string, index: number, quote: string, escapedOpeningQuote: boolean): boolean {
+function isSecretValueEnd(value: string, index: number, quote: string, escapedQuoteBackslashes: number): boolean {
   if (value[index] !== quote) return false;
   let backslashes = 0;
   for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) backslashes += 1;
   if (backslashes % 2 === 0) return true;
-  return escapedOpeningQuote && endsEscapedJsonValue(value, index);
+  return escapedQuoteBackslashes > 0 && backslashes === escapedQuoteBackslashes;
 }
 
-function findQuotedSecretEnd(value: string, start: number, quote: string, escapedOpeningQuote: boolean): number {
+function findQuotedSecretEnd(value: string, start: number, quote: string, escapedQuoteBackslashes: number): number {
   for (let index = start; index < value.length; index += 1) {
-    if (isSecretValueEnd(value, index, quote, escapedOpeningQuote)) return index + 1;
+    if (isSecretValueEnd(value, index, quote, escapedQuoteBackslashes)) return index + 1;
   }
   return value.length;
 }
 
+function countBackslashesBefore(value: string, index: number): number {
+  let count = 0;
+  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) count += 1;
+  return count;
+}
+
 function findStructuredSecretEnd(value: string, start: number): number {
   const closing: string[] = [value[start] === "[" ? "]" : "}"];
+  let escapedQuoteBackslashes: number | undefined;
+  for (let index = start + 1; index < value.length; index += 1) {
+    if (value[index] === '"') {
+      escapedQuoteBackslashes = countBackslashesBefore(value, index);
+      break;
+    }
+    if (value[index] === "}" || value[index] === "]") break;
+  }
+  const delimiterQuoteBackslashes = escapedQuoteBackslashes ?? 0;
   let quote: string | undefined;
-  let escaped = false;
   for (let index = start + 1; index < value.length; index += 1) {
     const character = value[index];
     if (quote) {
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === quote) quote = undefined;
+      if (character === quote) {
+        if (countBackslashesBefore(value, index) === delimiterQuoteBackslashes) quote = undefined;
+      }
       continue;
     }
-    if (character === '"' || character === "'" || character === "`") quote = character;
+    if (character === '"' || character === "'" || character === "`") {
+      if (countBackslashesBefore(value, index) === delimiterQuoteBackslashes) quote = character;
+    }
     else if (character === "[") closing.push("]");
     else if (character === "{") closing.push("}");
     else if (character === closing[closing.length - 1]) {
@@ -135,14 +143,15 @@ function findStructuredSecretEnd(value: string, start: number): number {
 function findUnquotedSecretEnd(value: string, start: number): number {
   if (value[start] === "[" || value[start] === "{") return findStructuredSecretEnd(value, start);
   for (let index = start; index < value.length; index += 1) {
-    if (/\s|[}\]]/.test(value[index])) return index;
+    if (/\s/.test(value[index])) return index;
     if (value[index] === "," && /^,\s*(?:\\)?["'][^"'\r\n]+(?:\\)?["']\s*:/.test(value.slice(index))) return index;
   }
   return value.length;
 }
 
-function findSecretEnd(value: string, start: number, quote?: string, escapedOpeningQuote = false): number {
-  return quote ? findQuotedSecretEnd(value, start, quote, escapedOpeningQuote) : findUnquotedSecretEnd(value, start);
+function findSecretEnd(value: string, start: number, quote?: string, serializedDepth = 0): number {
+  const escapedQuoteBackslashes = serializedDepth > 0 ? 2 ** serializedDepth - 1 : 0;
+  return quote ? findQuotedSecretEnd(value, start, quote, escapedQuoteBackslashes) : findUnquotedSecretEnd(value, start);
 }
 
 function redactSensitiveFields(value: string): string {
@@ -153,7 +162,7 @@ function redactSensitiveFields(value: string): string {
   while ((match = sensitiveFieldStart.exec(value)) !== null) {
     const serializedDepth = Math.max(match[2].length, match[5].length, match[6].length, match[7].length);
     const quote = match[8];
-    const valueEnd = serializedDepth >= 3 ? value.length : findSecretEnd(value, sensitiveFieldStart.lastIndex, quote, Boolean(match[7]));
+    const valueEnd = serializedDepth >= 3 ? value.length : findSecretEnd(value, sensitiveFieldStart.lastIndex, quote, serializedDepth);
     output += `${value.slice(copiedThrough, match.index)}${match[1]}${match[2]}${match[3]}${match[4]}${match[3]}: <redacted>`;
     copiedThrough = valueEnd;
     sensitiveFieldStart.lastIndex = valueEnd;
@@ -165,9 +174,11 @@ function builtinSanitize(value: string, webhookUrl?: string): string {
   const normalized = value.replace(/\u001b\[[0-9;]*m/g, "");
   return redactSensitiveFields(redactWebhookUrl(normalized, webhookUrl))
     .replace(/\bAuthorization\s*:\s*[^\r\n]+/gi, "Authorization: <redacted>")
-    .replace(/\bDigest\s+(?=[a-z][\w-]*\s*=)[^\r\n]*/gi, "<redacted-authorization>")
+    .replace(/\bDigest\s+(?=[a-z][\w-]*\*?\s*=)[^\r\n]*/gi, "<redacted-authorization>")
     .replace(/\bBearer\s+[^\s,;}"'\\]+/gi, "Bearer <redacted>")
     .replace(/\b(?:Basic|NTLM|Negotiate|ApiKey)\s+[^\s,;}"'\\]+/gi, "<redacted-authorization>")
+    .replace(/\b((?:credential|access token))\s*:\s*Token\s+[^\s,;}"'\\]+/gi, "$1: <redacted-authorization>")
+    .replace(/\bToken\s+(?=[^\s,;}"'\\]{12})[^\s,;}"'\\]+/g, "Token <redacted>")
     .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, "<redacted>")
     .replace(/\b(?:Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi, "<redacted-cookie>")
     .replace(/\b(?:AccountKey|SharedAccessKey|Ocp-Apim-Subscription-Key|x-functions-key)\s*=\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^;\s,}]+)/gi, "<redacted-key>")
