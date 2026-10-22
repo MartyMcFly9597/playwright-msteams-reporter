@@ -120,7 +120,7 @@ function resolveLinkUrl(
   try {
     const parsedUrl = new URL(url);
     if ((parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") ||
-      /(?:^|\/)undefined\/undefined\/actions\/runs\/undefined\/?$/i.test(parsedUrl.pathname)) return undefined;
+      /\/actions\/runs\/undefined\/?$/i.test(parsedUrl.pathname)) return undefined;
     return parsedUrl.href;
   } catch {
     return undefined;

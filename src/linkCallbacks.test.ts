@@ -53,6 +53,8 @@ describe("result link callback receivers", () => {
     "   ",
     "javascript:alert(1)",
     "https://acme.example/undefined/undefined/actions/runs/undefined",
+    "https://github.com/undefined/actions/runs/undefined",
+    "https://github.com/acme/project/actions/runs/undefined",
   ])("omits invalid results links returned as %s", async (invalidUrl) => {
     jest.spyOn(console, "log").mockImplementation();
     const fetchMock = jest.fn().mockResolvedValue({ ok: true, text: async () => "1" });
@@ -73,11 +75,13 @@ describe("result link callback receivers", () => {
     expect(JSON.stringify(actions)).not.toContain(invalidUrl);
   });
 
-  it("preserves valid URLs containing an undefined path segment across link options", async () => {
+  it.each([
+    "https://docs.acme.example/js/undefined/index.html",
+    "https://github.com/acme/undefined/actions/runs/12345",
+  ])("preserves valid URL %s across link options", async (validUrl) => {
     jest.spyOn(console, "log").mockImplementation();
     const fetchMock = jest.fn().mockResolvedValue({ ok: true, text: async () => "1" });
     global.fetch = fetchMock;
-    const validUrl = "https://docs.acme.example/js/undefined/index.html";
     const suite = {
       allTests: () => [{}],
       suites: [{ allTests: () => [{ outcome: () => "unexpected" }] }],
