@@ -138,6 +138,19 @@ describe("health card rendering", () => {
     }
   });
 
+  it("preserves following structured fields after quoted assignments", () => {
+    const inputs = [
+      JSON.stringify({ message: 'DB_PASSWORD="FIRST"PRIVATE_SUFFIX', other: "visible" }),
+      JSON.stringify({ first: "Error: password=secret", password: "FIRST SECOND", other: "visible" }),
+    ];
+    for (const input of inputs) {
+      const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+      expect(sanitized).not.toContain("PRIVATE_SUFFIX");
+      expect(sanitized).not.toContain("SECOND");
+      expect(sanitized).toContain("visible");
+    }
+  });
+
   it("redacts quoted credentials with an attached suffix", () => {
     for (const input of [
       'DB_PASSWORD="FIRST"PRIVATE_SUFFIX',
@@ -152,6 +165,8 @@ describe("health card rendering", () => {
       String.raw`Diagnostic, DB_PASSWORD=\"FIRST\"PRIVATE_SUFFIX`,
       String.raw`Diagnostic, DB_PASSWORD=1,PRIVATE_SUFFIX`,
       String.raw`Diagnostic, DB_PASSWORD=prefix,"region":"PRIVATE_SUFFIX`,
+      String.raw`Attempt 1, "password": "FIRST",PRIVATE_SUFFIX`,
+      String.raw`Status true, "password":1,PRIVATE_SUFFIX`,
     ];
     for (const input of inputs) {
       expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
@@ -165,10 +180,32 @@ describe("health card rendering", () => {
     expect(sanitized).toContain("visible-too");
   });
 
+  it("preserves JSON siblings after attached secret suffixes", () => {
+    const input = JSON.stringify({
+      message: 'DB_PASSWORD="FIRST"PRIVATE_SUFFIX',
+      other: "visible sibling",
+    });
+    const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+    expect(sanitized).not.toContain("PRIVATE_SUFFIX");
+    expect(sanitized).toContain("visible sibling");
+  });
+
+  it("does not treat quoted prose labels as structured JSON boundaries", () => {
+    for (const input of [
+      String.raw`Attempt "init", "password": "FIRST",PRIVATE_SUFFIX`,
+      String.raw`Attempt 1, "password": "FIRST",PRIVATE_SUFFIX`,
+      String.raw`Status true, "password": 1,PRIVATE_SUFFIX`,
+    ]) {
+      expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+    }
+  });
+
   it("does not infer serialized quote state from prose apostrophes", () => {
     const rawAssignment = String.raw`Can't connect: DB_PASSWORD=\"FIRST\"PRIVATE_SUFFIX`;
     const nestedJson = `Can't parse ${JSON.stringify({ note: "won't retry", message: String.raw`DB_PASSWORD=\"FIRST PRIVATE_SUFFIX\"` })}`;
-    for (const input of [rawAssignment, nestedJson]) {
+    const unexpectedQuote = String.raw`Error: unexpected '"' in {"message":"DB_PASSWORD=\"FIRST PRIVATE_SUFFIX\""}`;
+    const quoteInsidePreviousSecret = String.raw`password='a"b' Received: {"message":"DB_PASSWORD=\"FIRST PRIVATE_SUFFIX\""}`;
+    for (const input of [rawAssignment, nestedJson, unexpectedQuote, quoteInsidePreviousSecret]) {
       expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
     }
     expect(sanitizeHealthText(nestedJson, 1000, undefined, undefined, false)).toContain("won't retry");
@@ -227,6 +264,18 @@ describe("health card rendering", () => {
       .not.toContain("synthetic-credential");
     expect(sanitizeHealthText("Request access token: Token synthetic-credential", 300, undefined, undefined, false))
       .not.toContain("synthetic-credential");
+    for (const [input, credential] of [
+      ["access_token: Bearer opaque-secret", "opaque-secret"],
+      ["token: Token opaque-secret", "opaque-secret"],
+      ["api_key: ApiKey opaque-secret", "opaque-secret"],
+      ["password: Basic YWxpY2U6c2VjcmV0", "YWxpY2U6c2VjcmV0"],
+      ["token: Bearer opaque-secret", "opaque-secret"],
+      ["refresh_token: Token opaque-secret", "opaque-secret"],
+      ["x-api-key: ApiKey opaque-secret", "opaque-secret"],
+      ["auth token: Token opaque-secret", "opaque-secret"],
+    ]) {
+      expect(sanitizeHealthText(input, 300, undefined, undefined, false)).not.toContain(credential);
+    }
     expect(sanitizeHealthText("Token 9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b", 300, undefined, undefined, false))
       .not.toContain("9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b");
     expect(sanitizeHealthText("waiting for token refresh", 300, undefined, undefined, false)).toContain("waiting for token refresh");

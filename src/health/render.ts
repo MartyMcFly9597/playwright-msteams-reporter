@@ -129,34 +129,37 @@ function findStructuredSecretEnd(value: string, start: number, baseBackslashes =
   return value.length;
 }
 
-function isStructuredFieldContext(value: string, keyStart: number, keyQuote: string, separator: string): boolean {
-  if (!keyQuote || separator !== ":") return false;
-  let cursor = keyStart;
-  while (cursor > 0 && value[cursor - 1] === "\\") cursor -= 1;
-  while (cursor > 0) {
-    if (/\s/.test(value[cursor - 1])) cursor -= 1;
-    else if (cursor >= 2 && value[cursor - 2] === "\\" && /[nrt]/.test(value[cursor - 1])) cursor -= 2;
-    else if (value[cursor - 1] === "\\") cursor -= 1;
-    else break;
-  }
-  const boundary = value[cursor - 1];
-  if (boundary === "{") return true;
-  if (boundary !== ",") return false;
-  cursor -= 1;
-  while (cursor > 0 && /\s/.test(value[cursor - 1])) cursor -= 1;
-  if (cursor <= 0) return false;
-  if (["\"", "}", "]"].includes(value[cursor - 1]) || /[0-9]/.test(value[cursor - 1])) return true;
-  return /(?:true|false|null)$/.test(value.slice(Math.max(0, cursor - 5), cursor));
+interface StructuredContextState {
+  index: number;
+  depth: number;
+  quote?: string;
 }
 
-function advanceSerializedStringContext(value: string, start: number, end: number, open: boolean): boolean {
-  for (let index = start; index < end; index += 1) {
-    if (value[index] === '"' && isDelimiterQuote(value, index, '"', 0)) open = !open;
-  }
-  return open;
+function isQuoteOpening(value: string, index: number, depth: number): boolean {
+  let cursor = index - 1;
+  while (cursor >= 0 && /\s/.test(value[cursor])) cursor -= 1;
+  return cursor < 0 || value[cursor] === ":" || value[cursor] === "{" || value[cursor] === "[" ||
+    (depth > 0 && (value[cursor] === "," || value[cursor] === "="));
 }
 
-function findUnquotedSecretEnd(value: string, start: number, serializedDepth: number, structuredContext = false): number {
+function advanceStructuredContext(value: string, end: number, serializedDepth: number, state: StructuredContextState): boolean {
+  for (let index = state.index; index < end; index += 1) {
+    const character = value[index];
+    if (state.quote) {
+      if (isDelimiterQuote(value, index, state.quote, serializedDepth)) state.quote = undefined;
+      continue;
+    }
+    if ((character === '"' || character === "'" || character === "`") &&
+      isDelimiterQuote(value, index, character, serializedDepth)) {
+      if (character === '"' || isQuoteOpening(value, index, state.depth)) state.quote = character;
+    } else if (character === "{" || character === "[") state.depth += 1;
+    else if ((character === "}" || character === "]") && state.depth > 0) state.depth -= 1;
+  }
+  state.index = end;
+  return state.depth > 0 && state.quote === undefined;
+}
+
+function findUnquotedSecretEnd(value: string, start: number, serializedDepth: number, structuredContext = false, serializedStringContext = false): number {
   if (structuredContext) {
     const scalar = /^(?:null|true|false|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(value.slice(start));
     const scalarEnd = scalar ? start + scalar[0].length : start;
@@ -165,6 +168,7 @@ function findUnquotedSecretEnd(value: string, start: number, serializedDepth: nu
   }
   let index = start;
   while (index < value.length) {
+    if (serializedStringContext && isDelimiterQuote(value, index, '"', 0)) return index;
     if (value[index] === "[" || value[index] === "{") {
       const structuredEnd = findStructuredSecretEnd(value, index, serializedDepth);
       const escapedWhitespace = structuredContext && serializedDepth > 0 && /^\\[nrt]/.test(value.slice(structuredEnd));
@@ -174,6 +178,7 @@ function findUnquotedSecretEnd(value: string, start: number, serializedDepth: nu
       index = structuredEnd;
       continue;
     }
+    if (serializedDepth > 0 && isDelimiterQuote(value, index, '"', 0)) return index;
     if (/\s/.test(value[index])) return index;
     if (structuredContext && value[index] === "," && /^,(?:\s|\\[nrt])*(?:\\)?["'][^"'\r\n]+(?:\\)?["'](?:\s|\\[nrt])*:/.test(value.slice(index))) return index;
     index += 1;
@@ -181,20 +186,27 @@ function findUnquotedSecretEnd(value: string, start: number, serializedDepth: nu
   return value.length;
 }
 
-function findSecretEnd(value: string, start: number, quote?: string, serializedDepth = 0, structuredContext = false): number {
-  if (!quote) return findUnquotedSecretEnd(value, start, serializedDepth, structuredContext);
+function findSecretEnd(value: string, start: number, quote?: string, serializedDepth = 0, structuredContext = false, serializedStringContext = false): number {
+  if (!quote) return findUnquotedSecretEnd(value, start, serializedDepth, structuredContext, serializedStringContext);
   const quotedEnd = findQuotedSecretEnd(value, start, quote, serializedDepth);
   if (quotedEnd >= value.length || /\s/.test(value[quotedEnd])) return quotedEnd;
-  if (serializedDepth > 0 && isDelimiterQuote(value, quotedEnd, '"', 0)) return quotedEnd;
-  if (structuredContext && /[,}\]]/.test(value[quotedEnd])) return quotedEnd;
-  return findUnquotedSecretEnd(value, quotedEnd, serializedDepth, structuredContext);
+  if (isValueBoundary(value, quotedEnd, serializedDepth, structuredContext, serializedStringContext)) return quotedEnd;
+  return findUnquotedSecretEnd(value, quotedEnd, serializedDepth, structuredContext, serializedStringContext);
+}
+
+function isValueBoundary(value: string, index: number, serializedDepth: number, structuredContext: boolean, serializedStringContext: boolean): boolean {
+  if (serializedStringContext && isDelimiterQuote(value, index, '"', 0)) return true;
+  if (serializedDepth > 0 && isDelimiterQuote(value, index, '"', 0)) return true;
+  if (structuredContext && /[,}\]]/.test(value[index])) return true;
+  if (!structuredContext && /[;)]/.test(value[index])) return true;
+  return false;
 }
 
 function redactSensitiveFields(value: string): string {
   let output = "";
   let copiedThrough = 0;
-  let contextScanIndex = 0;
-  let inSerializedString = false;
+  const contextByDepth = new Map<number, StructuredContextState>();
+  const outerStringState: StructuredContextState = { index: 0, depth: 0 };
   sensitiveFieldStart.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = sensitiveFieldStart.exec(value)) !== null) {
@@ -202,12 +214,16 @@ function redactSensitiveFields(value: string): string {
     const quote = match[9];
     const keyStart = match.index + match[1].length + match[2].length;
     const separator = match[7];
-    const structuredContext = isStructuredFieldContext(value, keyStart, match[3], separator);
-    inSerializedString = advanceSerializedStringContext(value, contextScanIndex, keyStart, inSerializedString);
-    contextScanIndex = keyStart;
-    const serializedStringContext = serializedDepth > 0 && inSerializedString;
-    const valueQuote = quote && (serializedDepth === 0 || structuredContext || serializedStringContext) ? quote : undefined;
-    const valueEnd = serializedDepth >= 3 ? value.length : findSecretEnd(value, sensitiveFieldStart.lastIndex, valueQuote, serializedDepth, structuredContext);
+    let context = contextByDepth.get(serializedDepth);
+    if (!context) {
+      context = { index: 0, depth: 0 };
+      contextByDepth.set(serializedDepth, context);
+    }
+    advanceStructuredContext(value, keyStart, 0, outerStringState);
+    const structuredContext = separator === ":" && advanceStructuredContext(value, keyStart, serializedDepth, context);
+    const serializedStringContext = outerStringState.quote === '"';
+    const valueQuote = quote;
+    const valueEnd = serializedDepth >= 3 ? value.length : findSecretEnd(value, sensitiveFieldStart.lastIndex, valueQuote, serializedDepth, structuredContext, serializedStringContext);
     output += `${value.slice(copiedThrough, match.index)}${match[1]}${match[2]}${match[3]}${match[4]}${match[3]}: <redacted>`;
     copiedThrough = valueEnd;
     sensitiveFieldStart.lastIndex = valueEnd;
@@ -217,9 +233,7 @@ function redactSensitiveFields(value: string): string {
 
 function builtinSanitize(value: string, webhookUrl?: string): string {
   const normalized = value.replace(/\u001b\[[0-9;]*m/g, "");
-  const redactedAccessToken = redactWebhookUrl(normalized, webhookUrl)
-    .replace(/\b((?:credential|access token))\s*:\s*Token\s+[^\s,;}"'\\]+/gi, "$1: <redacted-authorization>");
-  return redactSensitiveFields(redactedAccessToken)
+  const redactedSchemes = redactWebhookUrl(normalized, webhookUrl)
     .replace(/\bAuthorization\s*:\s*[^\r\n]+/gi, "Authorization: <redacted>")
     .replace(/\bDigest\s+(?=[a-z][\w-]*\*?\s*=)[^\r\n]*/gi, "<redacted-authorization>")
     .replace(/\bBearer\s+[^\s,;}"'\\]+/gi, "Bearer <redacted>")
@@ -229,8 +243,10 @@ function builtinSanitize(value: string, webhookUrl?: string): string {
         ? "<redacted-authorization>" : match;
     })
     .replace(/\b(?:NTLM|Negotiate|ApiKey)\s+[^\s,;}"'\\]+/gi, "<redacted-authorization>")
+    .replace(new RegExp(String.raw`\b(${[...sensitiveFields, "credential", "access token", "auth token"].join("|")})\s*[:=]\s*Token\s+[^\s,;}"'\\]+`, "gi"), "$1: <redacted-authorization>")
     .replace(/\bToken\s+[A-Za-z0-9._~+/-]{24,}=*(?![A-Za-z0-9._~+/=-])/gi, "Token <redacted>")
-    .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, "<redacted>")
+    .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, "<redacted>");
+  return redactSensitiveFields(redactedSchemes)
     .replace(/\b(?:Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi, "<redacted-cookie>")
     .replace(/\b(?:AccountKey|SharedAccessKey|Ocp-Apim-Subscription-Key|x-functions-key)\s*=\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^;\s,}]+)/gi, "<redacted-key>")
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/gi, sanitizeUrl)
