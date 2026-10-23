@@ -3,6 +3,37 @@ import { aggregateHealth, compileCategories } from "./aggregate";
 import { buildHealthMessage, sanitizeHealthText } from "./render";
 
 describe("health card rendering", () => {
+  it("recognizes serialized whitespace before structural string quotes", () => {
+    for (const whitespace of ["\n", "\r", "\t", " \n\t "]) {
+      const input = JSON.stringify(`{"note":${whitespace}"}","token":null,"password":"FIRST PRIVATE_SUFFIX","other":"visible"}`);
+      const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+      expect(sanitized).not.toContain("PRIVATE_SUFFIX");
+      expect(sanitized).toContain("visible");
+    }
+  });
+
+  it("preserves backtick delimiters during early authentication scheme redaction", () => {
+    for (const scheme of ["Bearer", "NTLM", "Negotiate", "ApiKey", "credential: Token"]) {
+      const input = '{"password":`' + scheme + ' SCHEMELEAK`,"client_secret":`FIRST TAILLEAK`,"other":"visible"}';
+      const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+      expect(sanitized).not.toContain("SCHEMELEAK");
+      expect(sanitized).not.toContain("TAILLEAK");
+      expect(sanitized).toContain("visible");
+    }
+  });
+
+  it("redacts short Token values on quoted authentication labels", () => {
+    for (const label of ["credential", "access token", "auth token"]) {
+      const plain = JSON.stringify({ [label]: "Token synthetic-credential", other: "visible" });
+      for (const input of [plain, JSON.stringify(plain)]) {
+        const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+        expect(sanitized).not.toContain("synthetic-credential");
+        expect(sanitized).toContain("visible");
+      }
+    }
+    expect(sanitizeHealthText("waiting for Token refresh", 1000, undefined, undefined, false)).toBe("waiting for Token refresh");
+  });
+
   it("redacts quoted Azure account and shared access keys", () => {
     const input = JSON.stringify({ AccountKey: "ACCOUNTLEAK", SharedAccessKey: "SHAREDLEAK", other: "visible" });
     const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);

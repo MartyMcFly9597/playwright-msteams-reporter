@@ -65,9 +65,9 @@ const sensitiveFields = [
   "access[_-]?token", "refresh[_-]?token", "id[_-]?token", "client[_-]?secret", "api[_-]?key",
   "auth[_-]?token", "secret[_-]?key", "private[_-]?token", "secret[_-]?access[_-]?key",
   "sharedaccesskey", "accountkey", "authorization", "signature", "password", "passwd", "secret",
-  "cookie", "api-key", "api_key", "token", "pwd", "sig",
+  "cookie", "api-key", "api_key", "token", "pwd", "sig", "credential", "access token", "auth token",
 ];
-const sensitiveFieldStart = new RegExp(String.raw`(^|[^A-Za-z0-9]|\\[nrt])((?:\\)*)(?:(['"\x60])([A-Za-z0-9_.-]+)((?:\\)*)\3((?:\\)*)|(${sensitiveFields.join("|")})((?:\\)*))(?:\s|\\[nrt])*([:=])(?:\s|\\[nrt])*((?:\\)*)(['"\x60])?`, "gi");
+const sensitiveFieldStart = new RegExp(String.raw`(^|[^A-Za-z0-9]|\\[nrt])((?:\\)*)(?:(['"\x60])([A-Za-z0-9_. -]+)((?:\\)*)\3((?:\\)*)|(${sensitiveFields.join("|")})((?:\\)*))(?:\s|\\[nrt])*([:=])(?:\s|\\[nrt])*((?:\\)*)(['"\x60])?`, "gi");
 const homePathPattern = /\b[A-Z]:(?:[\\/]+)Users[\\/]+[^\\/"'\r\n]+|\/(?:Users|home)\/[^/"'\r\n]+/gi;
 const markdownCharacters = new Set(["\\", "`", "*", "_", "{", "}", "[", "]", "(", ")", "#", "+", "!", "|", ">"]);
 
@@ -137,10 +137,16 @@ interface StructuredContextState {
   quote?: string;
 }
 
-function isQuoteOpening(value: string, index: number, quote: string): boolean {
+function isQuoteOpening(value: string, index: number, quote: string, serializedDepth: number): boolean {
   let cursor = index - 1;
   while (cursor >= 0 && value[cursor] === "\\") cursor -= 1;
-  while (cursor >= 0 && /\s/.test(value[cursor])) cursor -= 1;
+  while (cursor >= 0) {
+    if (/\s/.test(value[cursor])) cursor -= 1;
+    else if (serializedDepth > 0 && /[nrt]/.test(value[cursor]) &&
+      countBackslashesBefore(value, cursor) === (serializedDepth + 1) / 2) {
+      cursor -= (serializedDepth + 1) / 2 + 1;
+    } else break;
+  }
   if (cursor < 0 || [":", "{", "[", ",", "="].includes(value[cursor])) return true;
   if (quote !== '"') return false;
   for (let next = index + 1; next < value.length && !/[\r\n{}]/.test(value[next]); next += 1) {
@@ -166,7 +172,7 @@ function advanceStructuredContext(value: string, end: number, serializedDepth: n
     }
     if ((character === '"' || character === "'" || character === "`") &&
       isDelimiterQuote(value, index, character, serializedDepth)) {
-      if (isQuoteOpening(value, index, character)) state.quote = character;
+      if (isQuoteOpening(value, index, character, serializedDepth)) state.quote = character;
     } else if (character === "{" || character === "[") state.containers.push(character);
     else if (character === "}" && state.containers.at(-1) === "{") state.containers.pop();
     else if (character === "]" && state.containers.at(-1) === "[") state.containers.pop();
@@ -260,14 +266,14 @@ function redactSensitiveFields(value: string): string {
 function builtinSanitize(value: string, webhookUrl?: string): string {
   const normalized = value.replace(/\u001b\[[0-9;]*m/g, "");
   const redactedSchemes = redactWebhookUrl(normalized, webhookUrl)
-    .replace(/\bBearer\s+[^\s,;}"'\\]+/gi, "Bearer <redacted>")
+    .replace(/\bBearer\s+[^\s,;}"'\x60\\]+/gi, "Bearer <redacted>")
     .replace(/\bBasic\s+([A-Za-z0-9+/]+=*)(?![A-Za-z0-9+/=])/gi, (match, credential: string) => {
       const decoded = Buffer.from(credential, "base64");
       return decoded.includes(58) && decoded.toString("base64").replace(/=+$/, "") === credential.replace(/=+$/, "")
         ? "<redacted-authorization>" : match;
     })
-    .replace(/\b(?:NTLM|Negotiate|ApiKey)\s+[^\s,;}"'\\]+/gi, "<redacted-authorization>")
-    .replace(new RegExp(String.raw`(^|[^A-Za-z0-9]|\\[nrt])(${[...sensitiveFields, "credential", "access token", "auth token"].join("|")})\s*[:=]\s*Token\s+[^\s,;}"'\\]+`, "gi"), "$1$2: <redacted-authorization>")
+    .replace(/\b(?:NTLM|Negotiate|ApiKey)\s+[^\s,;}"'\x60\\]+/gi, "<redacted-authorization>")
+    .replace(new RegExp(String.raw`(^|[^A-Za-z0-9]|\\[nrt])(${sensitiveFields.join("|")})\s*[:=]\s*Token\s+[^\s,;}"'\x60\\]+`, "gi"), "$1$2: <redacted-authorization>")
     .replace(/\bToken\s+[A-Za-z0-9._~+/-]{24,}=*(?![A-Za-z0-9._~+/=-])/gi, "Token <redacted>")
     .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, "<redacted>");
   return redactSensitiveFields(redactedSchemes)
