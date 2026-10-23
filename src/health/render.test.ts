@@ -195,6 +195,24 @@ describe("health card rendering", () => {
     expect(sanitizeHealthText(`Basic ${credential}`, 1000, undefined, undefined, false)).not.toContain(credential);
   });
 
+  it("redacts Basic credentials before log-wrapper punctuation", () => {
+    for (const credential of ["YWxpY2U6c2VjcmV0", "YWxpY2U6c2VjcmV0IQ=="]) {
+      for (const punctuation of [")", "]", "}", ",", ";", ":", "!", "?", "<", ">", "."]) {
+        expect(sanitizeHealthText(`Received (Basic ${credential}${punctuation} visible`, 1000, undefined, undefined, false))
+          .toBe(`Received (<redacted-authorization>${punctuation} visible`);
+      }
+    }
+  });
+
+  it("redacts Token credentials before log-wrapper punctuation", () => {
+    for (const credential of ["9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b", "9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b=="]) {
+      for (const punctuation of [")", "]", "}", ",", ";", ":", "!", "?", "<", ">"]) {
+        expect(sanitizeHealthText(`Received (tOkEn ${credential}${punctuation} visible`, 1000, undefined, undefined, false))
+          .toBe(`Received (Token <redacted>${punctuation} visible`);
+      }
+    }
+  });
+
   it("preserves short field names outside SAS parameter contexts", () => {
     const ordinaryFields = "sv=version se=expiry sp=permissions sr=resource";
 
