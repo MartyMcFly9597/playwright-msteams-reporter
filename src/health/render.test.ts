@@ -6,7 +6,10 @@ describe("health card rendering", () => {
   it("sanitizes secrets, URL credentials and signed queries before truncating", () => {
     const text = sanitizeHealthText(
       "Bearer opaque-secret https://user:password@acme.example/file?sig=secret#token eyJabc.def.ghi",
-      500
+      500,
+      undefined,
+      undefined,
+      false
     );
     expect(text).not.toContain("opaque-secret");
     expect(text).not.toContain("password");
@@ -58,7 +61,7 @@ describe("health card rendering", () => {
     expect(sanitized).not.toContain("key-value");
     expect(sanitized).not.toContain("session=private");
     expect(sanitizeHealthText("Cookie: theme=light; session=private")).not.toContain("session=private");
-    expect(sanitizeHealthText("DB_PASSWORD=private")).not.toContain("DB_PASSWORD=private");
+    expect(sanitizeHealthText("DB_PASSWORD=private", 300, undefined, undefined, false)).not.toContain("DB_PASSWORD=private");
     expect(sanitizeHealthText("DB_PASSWORD=alpha,SECRET-SUFFIX")).not.toContain("SECRET-SUFFIX");
     const cookieArray = sanitizeHealthText(String.raw`{"set-cookie":["first-session","second-session"],"other":"visible"}`);
     expect(cookieArray).not.toContain("second-session");
@@ -66,13 +69,13 @@ describe("health card rendering", () => {
     const multilineCookies = sanitizeHealthText(JSON.stringify({ "set-cookie": ["session=private", "auth=private"] }, null, 2));
     expect(multilineCookies).not.toContain("session=private");
     expect(multilineCookies).not.toContain("auth=private");
-    const singleQuotedCookies = sanitizeHealthText(String.raw`{ 'set-cookie': [ 'session=first]PRIVATE', 'session=SECOND_SECRET' ] }`);
+    const singleQuotedCookies = sanitizeHealthText(String.raw`{ 'set-cookie': [ 'session=first]PRIVATE', 'session=SECOND_SECRET' ] }`, 300, undefined, undefined, false);
     expect(singleQuotedCookies).not.toContain("PRIVATE");
     expect(singleQuotedCookies).not.toContain("SECOND_SECRET");
-    const escapedSingleQuote = sanitizeHealthText(String.raw`{ 'set-cookie': [ 'session=first\']PRIVATE', 'session=SECOND_SECRET' ] }`);
+    const escapedSingleQuote = sanitizeHealthText(String.raw`{ 'set-cookie': [ 'session=first\']PRIVATE', 'session=SECOND_SECRET' ] }`, 300, undefined, undefined, false);
     expect(escapedSingleQuote).not.toContain("PRIVATE");
     expect(escapedSingleQuote).not.toContain("SECOND_SECRET");
-    const backtickCookies = sanitizeHealthText("{ 'set-cookie': [ `session=first]PRIVATE`, `session=SECOND_SECRET` ] }");
+    const backtickCookies = sanitizeHealthText("{ 'set-cookie': [ `session=first]PRIVATE`, `session=SECOND_SECRET` ] }", 300, undefined, undefined, false);
     expect(backtickCookies).not.toContain("PRIVATE");
     expect(backtickCookies).not.toContain("SECOND_SECRET");
     expect(sanitizeHealthText("Response: 500; file.csv: value")).toContain("Response: 500; file.csv: value");
@@ -135,6 +138,56 @@ describe("health card rendering", () => {
     }
   });
 
+  it("redacts quoted credentials with an attached suffix", () => {
+    for (const input of [
+      'DB_PASSWORD="FIRST"PRIVATE_SUFFIX',
+      JSON.stringify({ message: 'DB_PASSWORD="FIRST"PRIVATE_SUFFIX' }),
+    ]) {
+      expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+    }
+  });
+
+  it("does not infer structured context from prose commas", () => {
+    const inputs = [
+      String.raw`Diagnostic, DB_PASSWORD=\"FIRST\"PRIVATE_SUFFIX`,
+      String.raw`Diagnostic, DB_PASSWORD=1,PRIVATE_SUFFIX`,
+      String.raw`Diagnostic, DB_PASSWORD=prefix,"region":"PRIVATE_SUFFIX`,
+    ];
+    for (const input of inputs) {
+      expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+    }
+  });
+
+  it("preserves real JSON structure after a preceding string value", () => {
+    const input = JSON.stringify({ previous: "visible", password: "FIRST PRIVATE_SUFFIX", other: "visible-too" });
+    const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+    expect(sanitized).not.toContain("PRIVATE_SUFFIX");
+    expect(sanitized).toContain("visible-too");
+  });
+
+  it("does not infer serialized quote state from prose apostrophes", () => {
+    const rawAssignment = String.raw`Can't connect: DB_PASSWORD=\"FIRST\"PRIVATE_SUFFIX`;
+    const nestedJson = `Can't parse ${JSON.stringify({ note: "won't retry", message: String.raw`DB_PASSWORD=\"FIRST PRIVATE_SUFFIX\"` })}`;
+    for (const input of [rawAssignment, nestedJson]) {
+      expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+    }
+    expect(sanitizeHealthText(nestedJson, 1000, undefined, undefined, false)).toContain("won't retry");
+  });
+
+  it("does not treat literal escaped whitespace as a free-form assignment boundary", () => {
+    const input = String.raw`DB_PASSWORD=\"{FIRST}\nPRIVATE_SUFFIX\"`;
+    expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+  });
+
+  it("redacts attached suffixes after quoted credential boundaries", () => {
+    for (const input of [
+      String.raw`DB_PASSWORD="FIRST"PRIVATE_SUFFIX`,
+      JSON.stringify({ message: String.raw`DB_PASSWORD="FIRST"PRIVATE_SUFFIX` }),
+    ]) {
+      expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+    }
+  });
+
   it("only treats an actually open serialized string as assignment context", () => {
     const nestedAfterLogText = JSON.stringify({
       message: 'Connection failed: DB_PASSWORD="FIRST PRIVATE_SUFFIX"',
@@ -159,6 +212,10 @@ describe("health card rendering", () => {
 
     expect(() => sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toThrow();
     expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+  });
+  it("scans many serialized sensitive fields without rescanning prior prefixes", () => {
+    const input = JSON.stringify(JSON.stringify(Array.from({ length: 3000 }, () => ({ token: "private-token" }))));
+    expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("private-token");
   });
   it("redacts Digest username-star directives", () => {
     expect(sanitizeHealthText("Digest username*=UTF-8''alice, realm=api, response=credential-proof", 300, undefined, undefined, false))
