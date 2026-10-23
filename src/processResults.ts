@@ -1,4 +1,4 @@
-import { Suite } from "@playwright/test/reporter";
+import { FullResult, Suite } from "@playwright/test/reporter";
 import { MsTeamsReporterOptions } from ".";
 import {
   createTableRow,
@@ -148,32 +148,35 @@ export const processResults = async (
   suite: Suite | undefined,
   options: MsTeamsReporterOptions,
   durationMs?: number,
-  gitAuthors?: string[]
+  gitAuthors?: string[],
+  runStatus: FullResult["status"] = "passed"
 ) => {
   resolveWebhookTimeout(options.webhookTimeoutMs);
   if (!options.webhookUrl) {
     console.error("No webhook URL provided");
     return;
   }
-  if (!suite) {
+  if (!suite && runStatus === "passed") {
     console.error("No test suite found");
     return;
   }
-  if (options.shouldRun && !options.shouldRun(suite)) return;
-  const totalTests = suite.allTests().length;
-  if (!options.reportOnEmpty && totalTests === 0) {
+  if (suite && options.shouldRun && !options.shouldRun(suite)) return;
+  const totalTests = suite?.allTests().length ?? 0;
+  if (runStatus === "passed" && !options.reportOnEmpty && totalTests === 0) {
     logSkippedReport("No tests found, skipping report (reportOnEmpty is false)", options);
     return;
   }
   const adaptiveCard = structuredClone(BaseAdaptiveCard);
-  const totalStatus = getTotalStatus(suite.suites);
-  const isSuccess = totalStatus.failed === 0;
+  const totalStatus = suite ? getTotalStatus(suite.suites) : { passed: 0, flaky: 0, failed: 0, skipped: 0 };
+  const isSuccess = runStatus === "passed" && totalStatus.failed === 0;
   if (isSuccess && !options.notifyOnSuccess) {
     logSkippedReport("No failed tests, skipping notification", options);
     return;
   }
   const table = buildResultsTable(totalStatus, totalTests, options, durationMs);
 
+  const hasFailedTests = totalStatus.failed > 0;
+  const useTestOutcomeTitle = runStatus === "passed" || (runStatus === "failed" && hasFailedTests);
   const container = {
     type: "Container",
     items: [
@@ -187,14 +190,14 @@ export const processResults = async (
         type: "TextBlock",
         size: "Large",
         weight: "Bolder",
-        text: getNotificationTitle(totalStatus),
-        color: getNotificationColor(totalStatus),
+        text: useTestOutcomeTitle ? getNotificationTitle(totalStatus) : `Test run ${runStatus === "timedout" ? "timed out" : runStatus}`,
+        color: useTestOutcomeTitle ? getNotificationColor(totalStatus) : "Attention",
       },
       table,
     ] as any[],
     bleed: true,
     backgroundImage: {
-      url: getNotificationBackground(totalStatus),
+    url: useTestOutcomeTitle ? getNotificationBackground(totalStatus) : getNotificationBackground({ ...totalStatus, failed: Math.max(1, totalStatus.failed) }),
       fillMode: "RepeatHorizontally",
     },
   };
