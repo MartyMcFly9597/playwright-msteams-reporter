@@ -62,6 +62,9 @@
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
+  "engines": {
+    "node": ">=22"
+  },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
     "@tsconfig/recommended": "^1.0.13",
