@@ -134,7 +134,17 @@ function isStructuredFieldContext(value: string, keyStart: number): boolean {
 }
 
 function isSerializedStringContext(value: string, keyStart: number, serializedDepth: number): boolean {
-  return serializedDepth > 0 && (value.trimStart().startsWith('"') || /:\s*(?:\\)*["']$/.test(value.slice(0, keyStart)));
+  if (serializedDepth === 0) return false;
+  let quote: string | undefined;
+  for (let index = 0; index < keyStart; index += 1) {
+    const character = value[index];
+    if (quote) {
+      if (character === quote && isDelimiterQuote(value, index, quote, 0)) quote = undefined;
+    } else if ((character === '"' || character === "'") && isDelimiterQuote(value, index, character, 0)) {
+      quote = character;
+    }
+  }
+  return quote !== undefined;
 }
 
 function findUnquotedSecretEnd(value: string, start: number, serializedDepth: number, structuredContext = false): number {
@@ -144,17 +154,20 @@ function findUnquotedSecretEnd(value: string, start: number, serializedDepth: nu
     const scalarBoundary = serializedDepth > 0 ? /^(?:\s|\\[nrt])*[,}\]]/ : /^\s*[,}\]]/;
     if (scalar && scalarBoundary.test(value.slice(scalarEnd))) return scalarEnd;
   }
-  if (value[start] === "[" || value[start] === "{") {
-    const structuredEnd = findStructuredSecretEnd(value, start, serializedDepth);
-    const escapedWhitespace = serializedDepth > 0 && /^\\[nrt]/.test(value.slice(structuredEnd));
-    if (structuredEnd === value.length || /\s/.test(value[structuredEnd]) || escapedWhitespace ||
-      (structuredContext && /[,}\]"']/.test(value[structuredEnd])) ||
-      (structuredContext && /^\\+["']/.test(value.slice(structuredEnd)))) return structuredEnd;
-    return findUnquotedSecretEnd(value, structuredEnd, serializedDepth, structuredContext);
-  }
-  for (let index = start; index < value.length; index += 1) {
+  let index = start;
+  while (index < value.length) {
+    if (value[index] === "[" || value[index] === "{") {
+      const structuredEnd = findStructuredSecretEnd(value, index, serializedDepth);
+      const escapedWhitespace = serializedDepth > 0 && /^\\[nrt]/.test(value.slice(structuredEnd));
+      if (structuredEnd === value.length || /\s/.test(value[structuredEnd]) || escapedWhitespace ||
+        (structuredContext && /[,}\]"']/.test(value[structuredEnd])) ||
+        (structuredContext && /^\\+["']/.test(value.slice(structuredEnd)))) return structuredEnd;
+      index = structuredEnd;
+      continue;
+    }
     if (/\s/.test(value[index])) return index;
     if (structuredContext && value[index] === "," && /^,(?:\s|\\[nrt])*(?:\\)?["'][^"'\r\n]+(?:\\)?["'](?:\s|\\[nrt])*:/.test(value.slice(index))) return index;
+    index += 1;
   }
   return value.length;
 }

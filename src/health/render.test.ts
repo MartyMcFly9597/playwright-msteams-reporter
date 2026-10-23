@@ -135,6 +135,15 @@ describe("health card rendering", () => {
     }
   });
 
+  it("only treats an actually open serialized string as assignment context", () => {
+    const nestedAfterLogText = JSON.stringify({
+      message: 'Connection failed: DB_PASSWORD="FIRST PRIVATE_SUFFIX"',
+    });
+    const afterClosedQuote = String.raw`"trace" DB_PASSWORD=\"FIRST\"PRIVATE_SUFFIX`;
+
+    expect(sanitizeHealthText(nestedAfterLogText, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+    expect(sanitizeHealthText(afterClosedQuote, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+  });
   it("does not leak array suffixes after a quoted value ending in a backslash", () => {
     const value = JSON.stringify({ authorization: ["prefix\\", "PRIVATE]TAIL"], other: "visible" });
 
@@ -145,6 +154,12 @@ describe("health card rendering", () => {
     }
   });
 
+  it("scans deeply nested adjacent credential segments without recursion", () => {
+    const input = `DB_PASSWORD=${"{}".repeat(20000)}PRIVATE_SUFFIX`;
+
+    expect(() => sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toThrow();
+    expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+  });
   it("redacts Digest username-star directives", () => {
     expect(sanitizeHealthText("Digest username*=UTF-8''alice, realm=api, response=credential-proof", 300, undefined, undefined, false))
       .not.toContain("credential-proof");
