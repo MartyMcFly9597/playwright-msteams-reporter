@@ -54,7 +54,11 @@ describe("health card rendering", () => {
 
   it("redacts quoted and escaped credentials without consuming neighboring fields", () => {
     const sanitized = sanitizeHealthText(
-      String.raw`{"password":"correct horse battery","client_secret":"synthetic-secret","x-api-key":"key-value","Cookie":"session=private"}`
+      String.raw`{"password":"correct horse battery","client_secret":"synthetic-secret","x-api-key":"key-value","Cookie":"session=private"}`,
+      1000,
+      undefined,
+      undefined,
+      false
     );
     expect(sanitized).not.toContain("correct horse battery");
     expect(sanitized).not.toContain("synthetic-secret");
@@ -62,11 +66,11 @@ describe("health card rendering", () => {
     expect(sanitized).not.toContain("session=private");
     expect(sanitizeHealthText("Cookie: theme=light; session=private")).not.toContain("session=private");
     expect(sanitizeHealthText("DB_PASSWORD=private", 300, undefined, undefined, false)).not.toContain("DB_PASSWORD=private");
-    expect(sanitizeHealthText("DB_PASSWORD=alpha,SECRET-SUFFIX")).not.toContain("SECRET-SUFFIX");
-    const cookieArray = sanitizeHealthText(String.raw`{"set-cookie":["first-session","second-session"],"other":"visible"}`);
+    expect(sanitizeHealthText("DB_PASSWORD=alpha,SECRET-SUFFIX", 300, undefined, undefined, false)).not.toContain("SECRET-SUFFIX");
+    const cookieArray = sanitizeHealthText(String.raw`{"set-cookie":["first-session","second-session"],"other":"visible"}`, 300, undefined, undefined, false);
     expect(cookieArray).not.toContain("second-session");
     expect(cookieArray).toContain("visible");
-    const multilineCookies = sanitizeHealthText(JSON.stringify({ "set-cookie": ["session=private", "auth=private"] }, null, 2));
+    const multilineCookies = sanitizeHealthText(JSON.stringify({ "set-cookie": ["session=private", "auth=private"] }, null, 2), 300, undefined, undefined, false);
     expect(multilineCookies).not.toContain("session=private");
     expect(multilineCookies).not.toContain("auth=private");
     const singleQuotedCookies = sanitizeHealthText(String.raw`{ 'set-cookie': [ 'session=first]PRIVATE', 'session=SECOND_SECRET' ] }`, 300, undefined, undefined, false);
@@ -107,8 +111,8 @@ describe("health card rendering", () => {
     }));
     const separatedByProse = String.raw`Log: {\"password\":\"secret1\"} failed: {"password":"secret2"}`;
 
-    expect(sanitizeHealthText(embeddedBoundary)).not.toContain("PRIVATE_SUFFIX");
-    expect(sanitizeHealthText(embeddedBoundary)).toContain("visible");
+    expect(sanitizeHealthText(embeddedBoundary, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+    expect(sanitizeHealthText(embeddedBoundary, 1000, undefined, undefined, false)).toContain("visible");
     expect(sanitizeHealthText(separatedByProse)).not.toContain("secret1");
     expect(sanitizeHealthText(separatedByProse)).not.toContain("secret2");
   });
@@ -120,8 +124,8 @@ describe("health card rendering", () => {
       other: "visible",
     }));
 
-    expect(sanitizeHealthText(value)).not.toContain("PRIVATE_SUFFIX");
-    expect(sanitizeHealthText(value)).toContain("visible");
+    expect(sanitizeHealthText(value, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+    expect(sanitizeHealthText(value, 1000, undefined, undefined, false)).toContain("visible");
   });
 
   it("closes escaped structured values before scanning following secret fields", () => {
@@ -190,6 +194,21 @@ describe("health card rendering", () => {
     expect(sanitized).toContain("visible sibling");
   });
 
+  it("preserves siblings after assignment-shaped fields in serialized strings", () => {
+    const cases = [
+      JSON.stringify({ message: "DB_PASSWORD=secret1", password: "correct horse battery", other: "visible" }),
+      JSON.stringify({ first: "Error: password=secret", password: "FIRST SECOND", other: "visible" }),
+      "{'previous':'visible','password':'FIRST SECOND','other':'visible'}",
+      '{password:"FIRST SECOND",client_secret:"part1 part2",other:"visible"}',
+    ];
+    for (const input of cases) {
+      const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+      expect(sanitized).not.toContain("horse");
+      expect(sanitized).not.toContain("SECOND");
+      expect(sanitized).toContain("visible");
+    }
+  });
+
   it("does not treat quoted prose labels as structured JSON boundaries", () => {
     for (const input of [
       String.raw`Attempt "init", "password": "FIRST",PRIVATE_SUFFIX`,
@@ -205,7 +224,9 @@ describe("health card rendering", () => {
     const nestedJson = `Can't parse ${JSON.stringify({ note: "won't retry", message: String.raw`DB_PASSWORD=\"FIRST PRIVATE_SUFFIX\"` })}`;
     const unexpectedQuote = String.raw`Error: unexpected '"' in {"message":"DB_PASSWORD=\"FIRST PRIVATE_SUFFIX\""}`;
     const quoteInsidePreviousSecret = String.raw`password='a"b' Received: {"message":"DB_PASSWORD=\"FIRST PRIVATE_SUFFIX\""}`;
-    for (const input of [rawAssignment, nestedJson, unexpectedQuote, quoteInsidePreviousSecret]) {
+    const quoteBeforeJson = String.raw`Expected 27" monitor. Received: {"message":"DB_PASSWORD=\"FIRST PRIVATE_SUFFIX\""}`;
+    const quoteInQuotedSecret = String.raw`password: 'a"b' {"message":"DB_PASSWORD=\"FIRST PRIVATE_SUFFIX\""}`;
+    for (const input of [rawAssignment, nestedJson, unexpectedQuote, quoteInsidePreviousSecret, quoteBeforeJson, quoteInQuotedSecret]) {
       expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
     }
     expect(sanitizeHealthText(nestedJson, 1000, undefined, undefined, false)).toContain("won't retry");
@@ -349,6 +370,31 @@ describe("health card rendering", () => {
     expect(sanitizedIndentedArray).toContain("visible");
   });
 
+  it("recognizes escaped whitespace around serialized field separators", () => {
+    for (const input of [
+      JSON.stringify('{"password"\n:"FIRST SECOND","other":"visible"}'),
+      JSON.stringify('{"password":\n"FIRST SECOND","other":"visible"}'),
+      JSON.stringify('{"token":null\n,"password":"FIRST SECOND","other":"visible"}'),
+    ]) {
+      const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+      expect(sanitized).not.toContain("SECOND");
+      expect(sanitized).toContain("visible");
+    }
+  });
+
+  it("redacts sensitive fields after serialized line breaks and in object key variants", () => {
+    const inputs = [
+      { input: JSON.stringify("line\npassword=hunter2"), secret: "hunter2" },
+      { input: "{'previous':'visible','password':'a b','other':'visible'}", secret: "a b", sibling: "visible" },
+      { input: '{password:"a b",other:"visible"}', secret: "a b", sibling: "visible" },
+    ];
+    for (const { input, secret, sibling } of inputs) {
+      const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+      expect(sanitized).not.toContain(secret);
+      if (sibling) expect(sanitized).toContain(sibling);
+    }
+  });
+
   it("continues scanning after scalar values in separate array objects", () => {
     for (const token of [null, true, false, 42, -1.5]) {
       const input = JSON.stringify([{ token }, { password: "correct horse battery", other: "visible" }]);
@@ -407,6 +453,20 @@ describe("health card rendering", () => {
     const signedUrl = sanitizeHealthText("https://acme.example/file?sp=PRIVATE_PERMISSIONS&sig=PRIVATE_SIGNATURE", 1000, undefined, undefined, false);
     expect(signedUrl).toContain("https://acme.example/file");
     expect(signedUrl).not.toContain("PRIVATE_");
+  });
+
+  it("redacts sensitive keys with environment, header, CLI, and camel-case prefixes", () => {
+    const inputs = [
+      ["GITHUB_TOKEN=SECRET_VALUE", "SECRET_VALUE"],
+      ["AZURE_CLIENT_SECRET=SECRET_VALUE", "SECRET_VALUE"],
+      ["--password=SECRET_VALUE", "SECRET_VALUE"],
+      ["X-Auth-Token: SECRET_VALUE", "SECRET_VALUE"],
+      ['{"accessToken":"SECRET_VALUE","apiKey":"OTHER_SECRET"}', "SECRET_VALUE"],
+      ['{"accessToken":"SECRET_VALUE","apiKey":"OTHER_SECRET"}', "OTHER_SECRET"],
+    ];
+    for (const [input, secret] of inputs) {
+      expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain(secret);
+    }
   });
 
   it("redacts escaped quotes in secrets and home paths across platforms", () => {

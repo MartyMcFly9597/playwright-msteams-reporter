@@ -62,10 +62,12 @@ function formatDuration(ms: number): string {
 const sensitiveFields = [
   "ocp-apim-subscription-key", "x-functions-key", "x-api-key", "client_secret", "client-secret",
   "db_password", "db-password", "access_token", "refresh_token", "id_token", "set-cookie",
+  "access[_-]?token", "refresh[_-]?token", "id[_-]?token", "client[_-]?secret", "api[_-]?key",
+  "auth[_-]?token", "secret[_-]?key", "private[_-]?token", "secret[_-]?access[_-]?key",
   "sharedaccesskey", "accountkey", "authorization", "signature", "password", "passwd", "secret",
   "cookie", "api-key", "api_key", "token", "pwd", "sig",
 ];
-const sensitiveFieldStart = new RegExp(String.raw`(^|[^\w-])((?:\\)*)(["'\x60]?)(${sensitiveFields.join("|")})((?:\\)*)\3((?:\\)*)\s*([:=])\s*((?:\\)*)(["'\x60])?`, "gi");
+const sensitiveFieldStart = new RegExp(String.raw`(^|[^A-Za-z0-9]|\\[nrt])((?:\\)*)(?:(["'\x60])(${sensitiveFields.join("|")})((?:\\)*)\3((?:\\)*)|(${sensitiveFields.join("|")})((?:\\)*))(?:\s|\\[nrt])*([:=])(?:\s|\\[nrt])*((?:\\)*)(["'\x60])?`, "gi");
 const homePathPattern = /\b[A-Z]:(?:[\\/]+)Users[\\/]+[^\\/"'\r\n]+|\/(?:Users|home)\/[^/"'\r\n]+/gi;
 const markdownCharacters = new Set(["\\", "`", "*", "_", "{", "}", "[", "]", "(", ")", "#", "+", "!", "|", ">"]);
 
@@ -131,15 +133,14 @@ function findStructuredSecretEnd(value: string, start: number, baseBackslashes =
 
 interface StructuredContextState {
   index: number;
-  depth: number;
+  containers: Array<"{" | "[">;
   quote?: string;
 }
 
-function isQuoteOpening(value: string, index: number, depth: number): boolean {
+function isQuoteOpening(value: string, index: number): boolean {
   let cursor = index - 1;
   while (cursor >= 0 && /\s/.test(value[cursor])) cursor -= 1;
-  return cursor < 0 || value[cursor] === ":" || value[cursor] === "{" || value[cursor] === "[" ||
-    (depth > 0 && (value[cursor] === "," || value[cursor] === "="));
+  return cursor < 0 || [":", "{", "[", ",", "="].includes(value[cursor]);
 }
 
 function advanceStructuredContext(value: string, end: number, serializedDepth: number, state: StructuredContextState): boolean {
@@ -151,12 +152,13 @@ function advanceStructuredContext(value: string, end: number, serializedDepth: n
     }
     if ((character === '"' || character === "'" || character === "`") &&
       isDelimiterQuote(value, index, character, serializedDepth)) {
-      if (character === '"' || isQuoteOpening(value, index, state.depth)) state.quote = character;
-    } else if (character === "{" || character === "[") state.depth += 1;
-    else if ((character === "}" || character === "]") && state.depth > 0) state.depth -= 1;
+      if (serializedDepth > 0 || isQuoteOpening(value, index)) state.quote = character;
+    } else if (character === "{" || character === "[") state.containers.push(character);
+    else if (character === "}" && state.containers.at(-1) === "{") state.containers.pop();
+    else if (character === "]" && state.containers.at(-1) === "[") state.containers.pop();
   }
   state.index = end;
-  return state.depth > 0 && state.quote === undefined;
+  return state.containers.at(-1) === "{" && state.quote === undefined;
 }
 
 function findUnquotedSecretEnd(value: string, start: number, serializedDepth: number, structuredContext = false, serializedStringContext = false): number {
@@ -206,17 +208,21 @@ function redactSensitiveFields(value: string): string {
   let output = "";
   let copiedThrough = 0;
   const contextByDepth = new Map<number, StructuredContextState>();
-  const outerStringState: StructuredContextState = { index: 0, depth: 0 };
+  const outerStringState: StructuredContextState = { index: 0, containers: [] };
   sensitiveFieldStart.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = sensitiveFieldStart.exec(value)) !== null) {
-    const serializedDepth = Math.max(match[2].length, match[5].length, match[6].length, match[8].length);
-    const quote = match[9];
+    const keyQuote = match[3] ?? "";
+    const fieldName = match[4] ?? match[7];
+    const suffixSlashes = match[5] ?? match[8] ?? "";
+    const postKeySlashes = match[6] ?? "";
+    const serializedDepth = Math.max(match[2].length, suffixSlashes.length, postKeySlashes.length, match[10].length);
+    const quote = match[11];
     const keyStart = match.index + match[1].length + match[2].length;
-    const separator = match[7];
+    const separator = match[9];
     let context = contextByDepth.get(serializedDepth);
     if (!context) {
-      context = { index: 0, depth: 0 };
+      context = { index: 0, containers: [] };
       contextByDepth.set(serializedDepth, context);
     }
     advanceStructuredContext(value, keyStart, 0, outerStringState);
@@ -224,7 +230,9 @@ function redactSensitiveFields(value: string): string {
     const serializedStringContext = outerStringState.quote === '"';
     const valueQuote = quote;
     const valueEnd = serializedDepth >= 3 ? value.length : findSecretEnd(value, sensitiveFieldStart.lastIndex, valueQuote, serializedDepth, structuredContext, serializedStringContext);
-    output += `${value.slice(copiedThrough, match.index)}${match[1]}${match[2]}${match[3]}${match[4]}${match[3]}: <redacted>`;
+    advanceStructuredContext(value, valueEnd, 0, outerStringState);
+    for (const [depth, state] of contextByDepth) advanceStructuredContext(value, valueEnd, depth, state);
+    output += `${value.slice(copiedThrough, match.index)}${match[1]}${match[2]}${keyQuote}${fieldName}${keyQuote}${postKeySlashes}: <redacted>`;
     copiedThrough = valueEnd;
     sensitiveFieldStart.lastIndex = valueEnd;
   }
