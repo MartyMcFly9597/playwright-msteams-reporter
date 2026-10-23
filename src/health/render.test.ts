@@ -3,6 +3,51 @@ import { aggregateHealth, compileCategories } from "./aggregate";
 import { buildHealthMessage, sanitizeHealthText } from "./render";
 
 describe("health card rendering", () => {
+  it("redacts quoted Azure account and shared access keys", () => {
+    const input = JSON.stringify({ AccountKey: "ACCOUNTLEAK", SharedAccessKey: "SHAREDLEAK", other: "visible" });
+    const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+    expect(sanitized).not.toContain("ACCOUNTLEAK");
+    expect(sanitized).not.toContain("SHAREDLEAK");
+    expect(sanitized).toContain("visible");
+  });
+
+  it("redacts assignments at the start of ordinary quoted field values", () => {
+    for (const assignment of ["password=EMBEDDEDLEAK", "token=EMBEDDEDLEAK"]) {
+      const input = JSON.stringify({ message: assignment, other: "visible" });
+      const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+      expect(sanitized).not.toContain("EMBEDDEDLEAK");
+      expect(sanitized).toContain("visible");
+    }
+  });
+
+  it("redacts assignments after quoted keys with unquoted values", () => {
+    const sanitized = sanitizeHealthText('{"message":password=EMBEDDEDLEAK,"other":"visible"}', 1000, undefined, undefined, false);
+    expect(sanitized).not.toContain("EMBEDDEDLEAK");
+  });
+
+  it("redacts sensitive siblings after multiline authorization values", () => {
+    for (const authorization of ["Digest username=alice", "Authorization: Bearer synthetic-credential"]) {
+      const input = JSON.stringify({ authorization, password: "FIRST SECONDLEAK", other: "visible" }, null, 2);
+      const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+      expect(sanitized).not.toContain("SECONDLEAK");
+      expect(sanitized).toContain("visible");
+    }
+  });
+
+  it("redacts short Token credentials on environment-prefixed labels", () => {
+    for (const input of ["GITHUB_TOKEN=Token synthetic-credential", "AZURE_CLIENT_SECRET=Token synthetic-credential"]) {
+      const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+      expect(sanitized).not.toContain("synthetic-credential");
+    }
+  });
+
+  it("redacts short Token credentials after serialized whitespace", () => {
+    const input = JSON.stringify({ log: "start\ntoken=Token synthetic-credential", other: "visible" });
+    const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+    expect(sanitized).not.toContain("synthetic-credential");
+    expect(sanitized).toContain("visible");
+  });
+
   it("sanitizes secrets, URL credentials and signed queries before truncating", () => {
     const text = sanitizeHealthText(
       "Bearer opaque-secret https://user:password@acme.example/file?sig=secret#token eyJabc.def.ghi",

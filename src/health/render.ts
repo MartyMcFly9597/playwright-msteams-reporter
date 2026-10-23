@@ -151,7 +151,10 @@ function isQuoteOpening(value: string, index: number, quote: string): boolean {
 
 function isSensitiveFieldName(fieldName: string): boolean {
   const normalized = fieldName.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
-  return sensitiveFields.some(field => new RegExp(String.raw`(?:^|[^a-z0-9])(?:${field})$`, "i").test(normalized));
+  return sensitiveFields.some(field => {
+    const pattern = new RegExp(String.raw`(?:^|[^a-z0-9])(?:${field})$`, "i");
+    return pattern.test(fieldName) || pattern.test(normalized);
+  });
 }
 
 function advanceStructuredContext(value: string, end: number, serializedDepth: number, state: StructuredContextState): boolean {
@@ -225,7 +228,10 @@ function redactSensitiveFields(value: string): string {
   while ((match = sensitiveFieldStart.exec(value)) !== null) {
     const keyQuote = match[3] ?? "";
     const fieldName = match[4] ?? match[7];
-    if (match[3] && !isSensitiveFieldName(fieldName)) continue;
+    if (keyQuote && !isSensitiveFieldName(fieldName)) {
+      sensitiveFieldStart.lastIndex = match.index + match[0].lastIndexOf(match[9]);
+      continue;
+    }
     const suffixSlashes = match[5] ?? match[8] ?? "";
     const postKeySlashes = match[6] ?? "";
     const serializedDepth = Math.max(match[2].length, suffixSlashes.length, postKeySlashes.length, match[10].length);
@@ -254,8 +260,6 @@ function redactSensitiveFields(value: string): string {
 function builtinSanitize(value: string, webhookUrl?: string): string {
   const normalized = value.replace(/\u001b\[[0-9;]*m/g, "");
   const redactedSchemes = redactWebhookUrl(normalized, webhookUrl)
-    .replace(/\bAuthorization\s*:\s*[^\r\n]+/gi, "Authorization: <redacted>")
-    .replace(/\bDigest\s+(?=[a-z][\w-]*\*?\s*=)[^\r\n]*/gi, "<redacted-authorization>")
     .replace(/\bBearer\s+[^\s,;}"'\\]+/gi, "Bearer <redacted>")
     .replace(/\bBasic\s+([A-Za-z0-9+/]+=*)(?![A-Za-z0-9+/=])/gi, (match, credential: string) => {
       const decoded = Buffer.from(credential, "base64");
@@ -263,10 +267,12 @@ function builtinSanitize(value: string, webhookUrl?: string): string {
         ? "<redacted-authorization>" : match;
     })
     .replace(/\b(?:NTLM|Negotiate|ApiKey)\s+[^\s,;}"'\\]+/gi, "<redacted-authorization>")
-    .replace(new RegExp(String.raw`\b(${[...sensitiveFields, "credential", "access token", "auth token"].join("|")})\s*[:=]\s*Token\s+[^\s,;}"'\\]+`, "gi"), "$1: <redacted-authorization>")
+    .replace(new RegExp(String.raw`(^|[^A-Za-z0-9]|\\[nrt])(${[...sensitiveFields, "credential", "access token", "auth token"].join("|")})\s*[:=]\s*Token\s+[^\s,;}"'\\]+`, "gi"), "$1$2: <redacted-authorization>")
     .replace(/\bToken\s+[A-Za-z0-9._~+/-]{24,}=*(?![A-Za-z0-9._~+/=-])/gi, "Token <redacted>")
     .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, "<redacted>");
   return redactSensitiveFields(redactedSchemes)
+    .replace(/\bAuthorization\s*:\s*[^\r\n]+/gi, "Authorization: <redacted>")
+    .replace(/\bDigest\s+(?=[a-z][\w-]*\*?\s*=)[^\r\n]*/gi, "<redacted-authorization>")
     .replace(/\b(?:Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi, "<redacted-cookie>")
     .replace(/\b(?:AccountKey|SharedAccessKey|Ocp-Apim-Subscription-Key|x-functions-key)\s*=\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^;\s,}]+)/gi, "<redacted-key>")
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/gi, sanitizeUrl)
