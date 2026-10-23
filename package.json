@@ -6,13 +6,25 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "require": "./dist/index.js",
+      "import": {
+        "types": "./dist/esm/index.d.mts",
+        "default": "./dist/esm/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
       "default": "./dist/index.js"
     },
     "./healthReporter": {
-      "types": "./dist/healthReporter.d.ts",
-      "require": "./dist/healthReporter.js",
+      "import": {
+        "types": "./dist/esm/healthReporter.d.mts",
+        "default": "./dist/esm/healthReporter.mjs"
+      },
+      "require": {
+        "types": "./dist/healthReporter.d.ts",
+        "default": "./dist/healthReporter.js"
+      },
       "default": "./dist/healthReporter.js"
     },
     "./healthCapture": {
@@ -27,7 +39,7 @@
     }
   },
   "scripts": {
-    "build": "node scripts/clean-dist.cjs && tsc",
+    "build": "node scripts/clean-dist.cjs && tsc && node scripts/build-esm-wrappers.cjs",
     "prepack": "npm run build",
     "watch": "tsc -w",
     "test": "NODE_ENV=development npx playwright test",
