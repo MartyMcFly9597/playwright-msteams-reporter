@@ -153,6 +153,8 @@ describe("health card rendering", () => {
   it("redacts Token credentials without redacting ordinary token prose", () => {
     expect(sanitizeHealthText("Request credential: Token synthetic-credential", 300, undefined, undefined, false))
       .not.toContain("synthetic-credential");
+    expect(sanitizeHealthText("Request access token: Token synthetic-credential", 300, undefined, undefined, false))
+      .not.toContain("synthetic-credential");
     expect(sanitizeHealthText("Token 9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b", 300, undefined, undefined, false))
       .not.toContain("9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b");
     expect(sanitizeHealthText("waiting for token refresh", 300, undefined, undefined, false)).toContain("waiting for token refresh");
@@ -199,6 +201,31 @@ describe("health card rendering", () => {
     expect(sanitized).not.toContain("correct");
     expect(sanitized).not.toContain("horse");
     expect(sanitized).not.toContain("battery");
+  });
+
+  it("redacts assignments nested in and prefixed before serialized strings", () => {
+    const nested = JSON.stringify({ message: 'DB_PASSWORD="FIRST PRIVATE_SUFFIX"' });
+    const prefixed = `Received: ${JSON.stringify('DB_PASSWORD="FIRST PRIVATE_SUFFIX"')}`;
+
+    for (const input of [nested, prefixed]) {
+      expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+    }
+  });
+
+  it("recognizes escaped whitespace between serialized structured values", () => {
+    const scalarArray = JSON.stringify('[{"token":null\n},{"password":"FIRST PRIVATE_SUFFIX"}]');
+    const indentedNestedArray = JSON.stringify(JSON.stringify([
+      { token: [] },
+      { password: "FIRST PRIVATE_SUFFIX", other: "visible" },
+    ], null, "\t"));
+
+    const sanitizedScalarArray = sanitizeHealthText(scalarArray, 1000, undefined, undefined, false);
+    expect(sanitizedScalarArray).not.toContain("PRIVATE_SUFFIX");
+
+    const sanitizedIndentedArray = sanitizeHealthText(indentedNestedArray, 1000, undefined, undefined, false);
+    expect(sanitizedIndentedArray).not.toContain("FIRST");
+    expect(sanitizedIndentedArray).not.toContain("PRIVATE_SUFFIX");
+    expect(sanitizedIndentedArray).toContain("visible");
   });
 
   it("continues scanning after scalar values in separate array objects", () => {

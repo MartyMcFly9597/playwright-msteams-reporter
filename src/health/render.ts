@@ -134,24 +134,27 @@ function isStructuredFieldContext(value: string, keyStart: number): boolean {
 }
 
 function isSerializedStringContext(value: string, keyStart: number, serializedDepth: number): boolean {
-  return serializedDepth > 0 && value.trimStart().startsWith('"') && !isStructuredFieldContext(value, keyStart);
+  return serializedDepth > 0 && (value.trimStart().startsWith('"') || /:\s*(?:\\)*["']$/.test(value.slice(0, keyStart)));
 }
 
 function findUnquotedSecretEnd(value: string, start: number, serializedDepth: number, structuredContext = false): number {
   if (structuredContext) {
-    const scalar = /^(?:null|true|false|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)(?=\s*[,}\]])/.exec(value.slice(start));
-    if (scalar) return start + scalar[0].length;
+    const scalar = /^(?:null|true|false|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(value.slice(start));
+    const scalarEnd = scalar ? start + scalar[0].length : start;
+    const scalarBoundary = serializedDepth > 0 ? /^(?:\s|\\[nrt])*[,}\]]/ : /^\s*[,}\]]/;
+    if (scalar && scalarBoundary.test(value.slice(scalarEnd))) return scalarEnd;
   }
   if (value[start] === "[" || value[start] === "{") {
     const structuredEnd = findStructuredSecretEnd(value, start, serializedDepth);
-    if (structuredEnd === value.length || /\s/.test(value[structuredEnd]) ||
+    const escapedWhitespace = serializedDepth > 0 && /^\\[nrt]/.test(value.slice(structuredEnd));
+    if (structuredEnd === value.length || /\s/.test(value[structuredEnd]) || escapedWhitespace ||
       (structuredContext && /[,}\]"']/.test(value[structuredEnd])) ||
       (structuredContext && /^\\+["']/.test(value.slice(structuredEnd)))) return structuredEnd;
     return findUnquotedSecretEnd(value, structuredEnd, serializedDepth, structuredContext);
   }
   for (let index = start; index < value.length; index += 1) {
     if (/\s/.test(value[index])) return index;
-    if (structuredContext && value[index] === "," && /^,\s*(?:\\)?["'][^"'\r\n]+(?:\\)?["']\s*:/.test(value.slice(index))) return index;
+    if (structuredContext && value[index] === "," && /^,(?:\s|\\[nrt])*(?:\\)?["'][^"'\r\n]+(?:\\)?["'](?:\s|\\[nrt])*:/.test(value.slice(index))) return index;
   }
   return value.length;
 }
@@ -184,7 +187,9 @@ function redactSensitiveFields(value: string): string {
 
 function builtinSanitize(value: string, webhookUrl?: string): string {
   const normalized = value.replace(/\u001b\[[0-9;]*m/g, "");
-  return redactSensitiveFields(redactWebhookUrl(normalized, webhookUrl))
+  const redactedAccessToken = redactWebhookUrl(normalized, webhookUrl)
+    .replace(/\b((?:credential|access token))\s*:\s*Token\s+[^\s,;}"'\\]+/gi, "$1: <redacted-authorization>");
+  return redactSensitiveFields(redactedAccessToken)
     .replace(/\bAuthorization\s*:\s*[^\r\n]+/gi, "Authorization: <redacted>")
     .replace(/\bDigest\s+(?=[a-z][\w-]*\*?\s*=)[^\r\n]*/gi, "<redacted-authorization>")
     .replace(/\bBearer\s+[^\s,;}"'\\]+/gi, "Bearer <redacted>")
@@ -194,7 +199,6 @@ function builtinSanitize(value: string, webhookUrl?: string): string {
         ? "<redacted-authorization>" : match;
     })
     .replace(/\b(?:NTLM|Negotiate|ApiKey)\s+[^\s,;}"'\\]+/gi, "<redacted-authorization>")
-    .replace(/\b((?:credential|access token))\s*:\s*Token\s+[^\s,;}"'\\]+/gi, "$1: <redacted-authorization>")
     .replace(/\bToken\s+[A-Za-z0-9._~+/-]{24,}=*(?![A-Za-z0-9._~+/=-])/gi, "Token <redacted>")
     .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, "<redacted>")
     .replace(/\b(?:Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi, "<redacted-cookie>")
