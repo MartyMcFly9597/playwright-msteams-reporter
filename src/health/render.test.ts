@@ -469,6 +469,49 @@ describe("health card rendering", () => {
     }
   });
 
+  it("redacts prefixed sensitive keys when they are quoted", () => {
+    const sanitized = sanitizeHealthText(
+      '{"GITHUB_TOKEN":"SECRET_VALUE","AZURE_CLIENT_SECRET":"OTHER_SECRET","dbPassword":"THIRD_SECRET","other":"visible"}',
+      1000,
+      undefined,
+      undefined,
+      false
+    );
+
+    expect(sanitized).not.toContain("SECRET_VALUE");
+    expect(sanitized).not.toContain("OTHER_SECRET");
+    expect(sanitized).not.toContain("THIRD_SECRET");
+    expect(sanitized).toContain("visible");
+  });
+
+  it("preserves structured siblings after apostrophes and punctuation in prose", () => {
+    const inputs = [
+      `Can't parse ${JSON.stringify({ password: "FIRST PRIVATE_SUFFIX", other: "visible" })}`,
+      `Unexpected token ":" in ${JSON.stringify({ password: "secret1", client_secret: "LEAKED_SECRET", other: "visible" })}`,
+      `Expected "id=" in ${JSON.stringify({ password: "secret1", client_secret: "LEAKED_SECRET", other: "visible" })}`,
+    ];
+
+    for (const input of inputs) {
+      const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+      expect(sanitized).not.toContain("PRIVATE_SUFFIX");
+      expect(sanitized).not.toContain("LEAKED_SECRET");
+      expect(sanitized).toContain("visible");
+    }
+  });
+
+  it("preserves siblings in multiline serialized authorization and cookie values", () => {
+    const inputs = [
+      JSON.stringify({ message: "Authorization: Bearer secret1", other: "visible" }, null, 2),
+      JSON.stringify({ message: "Cookie: session=secret", other: "visible" }, null, 2),
+      JSON.stringify({ authorization: "Digest username=alice", other: "visible" }, null, 2),
+    ];
+
+    for (const input of inputs) {
+      const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+      expect(sanitized).toContain("visible");
+    }
+  });
+
   it("redacts escaped quotes in secrets and home paths across platforms", () => {
     const sanitized = sanitizeHealthText(String.raw`{"password":"part1\"part2","url":"amqp://user:secret@broker.acme.example"} C:\Users\alice\work /Users/bob/work /home/carol/work C:/Users/dave/work`);
     expect(sanitized).not.toContain("part2");

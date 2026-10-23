@@ -67,7 +67,7 @@ const sensitiveFields = [
   "sharedaccesskey", "accountkey", "authorization", "signature", "password", "passwd", "secret",
   "cookie", "api-key", "api_key", "token", "pwd", "sig",
 ];
-const sensitiveFieldStart = new RegExp(String.raw`(^|[^A-Za-z0-9]|\\[nrt])((?:\\)*)(?:(["'\x60])(${sensitiveFields.join("|")})((?:\\)*)\3((?:\\)*)|(${sensitiveFields.join("|")})((?:\\)*))(?:\s|\\[nrt])*([:=])(?:\s|\\[nrt])*((?:\\)*)(["'\x60])?`, "gi");
+const sensitiveFieldStart = new RegExp(String.raw`(^|[^A-Za-z0-9]|\\[nrt])((?:\\)*)(?:(['"\x60])([A-Za-z0-9_.-]+)((?:\\)*)\3((?:\\)*)|(${sensitiveFields.join("|")})((?:\\)*))(?:\s|\\[nrt])*([:=])(?:\s|\\[nrt])*((?:\\)*)(['"\x60])?`, "gi");
 const homePathPattern = /\b[A-Z]:(?:[\\/]+)Users[\\/]+[^\\/"'\r\n]+|\/(?:Users|home)\/[^/"'\r\n]+/gi;
 const markdownCharacters = new Set(["\\", "`", "*", "_", "{", "}", "[", "]", "(", ")", "#", "+", "!", "|", ">"]);
 
@@ -137,10 +137,21 @@ interface StructuredContextState {
   quote?: string;
 }
 
-function isQuoteOpening(value: string, index: number): boolean {
+function isQuoteOpening(value: string, index: number, quote: string): boolean {
   let cursor = index - 1;
+  while (cursor >= 0 && value[cursor] === "\\") cursor -= 1;
   while (cursor >= 0 && /\s/.test(value[cursor])) cursor -= 1;
-  return cursor < 0 || [":", "{", "[", ",", "="].includes(value[cursor]);
+  if (cursor < 0 || [":", "{", "[", ",", "="].includes(value[cursor])) return true;
+  if (quote !== '"') return false;
+  for (let next = index + 1; next < value.length && !/[\r\n{}]/.test(value[next]); next += 1) {
+    if (isDelimiterQuote(value, next, quote, 0)) return true;
+  }
+  return false;
+}
+
+function isSensitiveFieldName(fieldName: string): boolean {
+  const normalized = fieldName.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+  return sensitiveFields.some(field => new RegExp(String.raw`(?:^|[^a-z0-9])(?:${field})$`, "i").test(normalized));
 }
 
 function advanceStructuredContext(value: string, end: number, serializedDepth: number, state: StructuredContextState): boolean {
@@ -152,7 +163,7 @@ function advanceStructuredContext(value: string, end: number, serializedDepth: n
     }
     if ((character === '"' || character === "'" || character === "`") &&
       isDelimiterQuote(value, index, character, serializedDepth)) {
-      if (serializedDepth > 0 || isQuoteOpening(value, index)) state.quote = character;
+      if (isQuoteOpening(value, index, character)) state.quote = character;
     } else if (character === "{" || character === "[") state.containers.push(character);
     else if (character === "}" && state.containers.at(-1) === "{") state.containers.pop();
     else if (character === "]" && state.containers.at(-1) === "[") state.containers.pop();
@@ -214,6 +225,7 @@ function redactSensitiveFields(value: string): string {
   while ((match = sensitiveFieldStart.exec(value)) !== null) {
     const keyQuote = match[3] ?? "";
     const fieldName = match[4] ?? match[7];
+    if (match[3] && !isSensitiveFieldName(fieldName)) continue;
     const suffixSlashes = match[5] ?? match[8] ?? "";
     const postKeySlashes = match[6] ?? "";
     const serializedDepth = Math.max(match[2].length, suffixSlashes.length, postKeySlashes.length, match[10].length);
