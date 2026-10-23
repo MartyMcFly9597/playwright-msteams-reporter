@@ -129,27 +129,33 @@ function findStructuredSecretEnd(value: string, start: number, baseBackslashes =
   return value.length;
 }
 
-function findUnquotedSecretEnd(value: string, start: number, serializedDepth: number, quotedField = false): number {
-  if (quotedField) {
+function isStructuredFieldContext(value: string, keyStart: number): boolean {
+  return /[,{]\s*(?:\\)*$/.test(value.slice(0, keyStart));
+}
+
+function findUnquotedSecretEnd(value: string, start: number, serializedDepth: number, structuredContext = false): number {
+  if (structuredContext) {
     const scalar = /^(?:null|true|false|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)(?=\s*[,}\]])/.exec(value.slice(start));
     if (scalar) return start + scalar[0].length;
   }
   if (value[start] === "[" || value[start] === "{") {
     const structuredEnd = findStructuredSecretEnd(value, start, serializedDepth);
-    if (structuredEnd === value.length || /[\s,}\]"'\\]/.test(value[structuredEnd])) return structuredEnd;
-    return findUnquotedSecretEnd(value, structuredEnd, serializedDepth);
+    if (structuredEnd === value.length || /\s/.test(value[structuredEnd]) ||
+      (structuredContext && /[,}\]"']/.test(value[structuredEnd])) ||
+      (structuredContext && /^\\+["']/.test(value.slice(structuredEnd)))) return structuredEnd;
+    return findUnquotedSecretEnd(value, structuredEnd, serializedDepth, structuredContext);
   }
   for (let index = start; index < value.length; index += 1) {
     if (/\s/.test(value[index])) return index;
-    if (value[index] === "," && /^,\s*(?:\\)?["'][^"'\r\n]+(?:\\)?["']\s*:/.test(value.slice(index))) return index;
+    if (structuredContext && value[index] === "," && /^,\s*(?:\\)?["'][^"'\r\n]+(?:\\)?["']\s*:/.test(value.slice(index))) return index;
   }
   return value.length;
 }
 
-function findSecretEnd(value: string, start: number, quote?: string, serializedDepth = 0, quotedField = false): number {
+function findSecretEnd(value: string, start: number, quote?: string, serializedDepth = 0, structuredContext = false): number {
   return quote
     ? findQuotedSecretEnd(value, start, quote, serializedDepth)
-    : findUnquotedSecretEnd(value, start, serializedDepth, quotedField);
+    : findUnquotedSecretEnd(value, start, serializedDepth, structuredContext);
 }
 
 function redactSensitiveFields(value: string): string {
@@ -160,7 +166,10 @@ function redactSensitiveFields(value: string): string {
   while ((match = sensitiveFieldStart.exec(value)) !== null) {
     const serializedDepth = Math.max(match[2].length, match[5].length, match[6].length, match[7].length);
     const quote = match[8];
-    const valueEnd = serializedDepth >= 3 ? value.length : findSecretEnd(value, sensitiveFieldStart.lastIndex, quote, serializedDepth, Boolean(match[3]));
+    const keyStart = match.index + match[1].length + match[2].length;
+    const structuredContext = isStructuredFieldContext(value, keyStart);
+    const valueQuote = quote && (serializedDepth === 0 || structuredContext) ? quote : undefined;
+    const valueEnd = serializedDepth >= 3 ? value.length : findSecretEnd(value, sensitiveFieldStart.lastIndex, valueQuote, serializedDepth, structuredContext);
     output += `${value.slice(copiedThrough, match.index)}${match[1]}${match[2]}${match[3]}${match[4]}${match[3]}: <redacted>`;
     copiedThrough = valueEnd;
     sensitiveFieldStart.lastIndex = valueEnd;

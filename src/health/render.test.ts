@@ -161,7 +161,22 @@ describe("health card rendering", () => {
   });
 
   it("redacts attached suffixes after brace-prefixed credentials", () => {
-    for (const input of ["DB_PASSWORD={FIRST}PRIVATE_SUFFIX", "DB_PASSWORD=[FIRST]PRIVATE_SUFFIX"]) {
+    for (const input of [
+      "DB_PASSWORD={FIRST}PRIVATE_SUFFIX",
+      "DB_PASSWORD=[FIRST]PRIVATE_SUFFIX",
+      String.raw`DB_PASSWORD={FIRST}\PRIVATE_SUFFIX`,
+      String.raw`DB_PASSWORD=[FIRST]\PRIVATE_SUFFIX`,
+    ]) {
+      expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+    }
+  });
+
+  it("does not treat escaped shell quotes or JSON-like fragments as assignment boundaries", () => {
+    for (const input of [
+      String.raw`DB_PASSWORD=\"FIRST\"PRIVATE_SUFFIX`,
+      String.raw`"DB_PASSWORD"=null}PRIVATE_SUFFIX`,
+      String.raw`DB_PASSWORD=prefix,"region":"PRIVATE_SUFFIX`,
+    ]) {
       expect(sanitizeHealthText(input, 1000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
     }
   });
