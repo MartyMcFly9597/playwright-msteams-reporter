@@ -92,10 +92,14 @@ export default class MsTeamsReporter implements Reporter {
 
     this.options = {
       ...defaultOptions,
-      ...options,
+      ...Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)),
       webhookUrl: resolveWebhookUrl(options.webhookUrl, options.webhookUrlEnv),
       webhookTimeoutMs: resolveWebhookTimeout(options.webhookTimeoutMs),
     };
+
+    if (this.options.webhookType !== "msteams" && this.options.webhookType !== "powerautomate") {
+      throw new Error("webhookType must be either msteams or powerautomate");
+    }
 
     console.log(`Using Microsoft Teams reporter`);
 

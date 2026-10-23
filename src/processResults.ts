@@ -101,8 +101,9 @@ function addResultsLink(
   options: MsTeamsReporterOptions
 ) {
   if (!link) return;
-  const url = typeof link === "string" ? link : link.call(options);
-  if (url && typeof url === "string") {
+  if (typeof title !== "string" || !title.trim()) return;
+  const url = resolveLinkUrl(link, options);
+  if (url) {
     adaptiveCard.actions.push({ type: "Action.OpenUrl", title, url });
   }
 }
@@ -118,7 +119,8 @@ function resolveLinkUrl(
   if (typeof url !== "string" || !url.trim()) return undefined;
   try {
     const parsedUrl = new URL(url);
-    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") return undefined;
+    if ((parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") ||
+      /\/actions\/runs\/undefined\/?$/i.test(parsedUrl.pathname)) return undefined;
     return parsedUrl.href;
   } catch {
     return undefined;
@@ -126,7 +128,7 @@ function resolveLinkUrl(
 }
 
 function addReportLinks(adaptiveCard: AdaptiveCard, options: MsTeamsReporterOptions, isSuccess: boolean) {
-  addResultsLink(adaptiveCard, options.linkToResultsUrl, options.linkToResultsText, options);
+  addResultsLink(adaptiveCard, options.linkToResultsUrl, options.linkToResultsText ?? "View test results", options);
   for (const link of options.links ?? []) {
     if (!link || typeof link.text !== "string" || !link.text.trim() || !link.url) continue;
     const url = resolveLinkUrl(link.url, options);
