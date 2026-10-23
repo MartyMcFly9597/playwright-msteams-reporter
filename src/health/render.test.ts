@@ -181,6 +181,26 @@ describe("health card rendering", () => {
     }
   });
 
+  it("redacts suffixes in indented JSON after serialization", () => {
+    const value = JSON.stringify(JSON.stringify({
+      password: "FIRST PRIVATE_SUFFIX",
+      other: "visible",
+    }, null, 2));
+    const sanitized = sanitizeHealthText(value, 1000, undefined, undefined, false);
+
+    expect(sanitized).not.toContain("PRIVATE_SUFFIX");
+    expect(sanitized).toContain("visible");
+  });
+
+  it("redacts quoted assignments after serialization", () => {
+    const value = JSON.stringify('DB_PASSWORD="correct horse battery"');
+    const sanitized = sanitizeHealthText(value, 1000, undefined, undefined, false);
+
+    expect(sanitized).not.toContain("correct");
+    expect(sanitized).not.toContain("horse");
+    expect(sanitized).not.toContain("battery");
+  });
+
   it("continues scanning after scalar values in separate array objects", () => {
     for (const token of [null, true, false, 42, -1.5]) {
       const input = JSON.stringify([{ token }, { password: "correct horse battery", other: "visible" }]);

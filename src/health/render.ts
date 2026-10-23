@@ -130,7 +130,11 @@ function findStructuredSecretEnd(value: string, start: number, baseBackslashes =
 }
 
 function isStructuredFieldContext(value: string, keyStart: number): boolean {
-  return /[,{]\s*(?:\\)*$/.test(value.slice(0, keyStart));
+  return /[,{](?:\s|\\[nrt])*(?:\\)*$/.test(value.slice(0, keyStart));
+}
+
+function isSerializedStringContext(value: string, keyStart: number, serializedDepth: number): boolean {
+  return serializedDepth > 0 && value.trimStart().startsWith('"') && !isStructuredFieldContext(value, keyStart);
 }
 
 function findUnquotedSecretEnd(value: string, start: number, serializedDepth: number, structuredContext = false): number {
@@ -168,7 +172,8 @@ function redactSensitiveFields(value: string): string {
     const quote = match[8];
     const keyStart = match.index + match[1].length + match[2].length;
     const structuredContext = isStructuredFieldContext(value, keyStart);
-    const valueQuote = quote && (serializedDepth === 0 || structuredContext) ? quote : undefined;
+    const serializedStringContext = isSerializedStringContext(value, keyStart, serializedDepth);
+    const valueQuote = quote && (serializedDepth === 0 || structuredContext || serializedStringContext) ? quote : undefined;
     const valueEnd = serializedDepth >= 3 ? value.length : findSecretEnd(value, sensitiveFieldStart.lastIndex, valueQuote, serializedDepth, structuredContext);
     output += `${value.slice(copiedThrough, match.index)}${match[1]}${match[2]}${match[3]}${match[4]}${match[3]}: <redacted>`;
     copiedThrough = valueEnd;
