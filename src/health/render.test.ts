@@ -3,6 +3,33 @@ import { aggregateHealth, compileCategories } from "./aggregate";
 import { buildHealthMessage, sanitizeHealthText } from "./render";
 
 describe("health card rendering", () => {
+  it("preserves secret boundaries after single-quoted diagnostic punctuation", () => {
+    for (const punctuation of [":", "=", ","]) {
+      const input = `Unexpected token '${punctuation}' in {"password":"FIRST","client_secret":"NEXT PRIVATE_SUFFIX","other":"visible"}`;
+      const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+      expect(sanitized).not.toContain("PRIVATE_SUFFIX");
+      expect(sanitized).toContain("visible");
+    }
+  });
+
+  it("redacts sensitive fields inside quoted diagnostic wrappers", () => {
+    for (const wrapper of ["'", "`"]) {
+      const input = `Error: ${wrapper}{"token":null,"password":"FIRST PRIVATE_SUFFIX","other":"visible"}${wrapper}`;
+      const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+      expect(sanitized).not.toContain("PRIVATE_SUFFIX");
+      expect(sanitized).toContain("visible");
+    }
+  });
+
+  it("redacts contextual Token credentials after serialized separator whitespace", () => {
+    for (const whitespace of ["\n", "\r", "\t"]) {
+      const input = JSON.stringify({ log: `token=${whitespace} Token synthetic-credential`, other: "visible" });
+      const sanitized = sanitizeHealthText(input, 1000, undefined, undefined, false);
+      expect(sanitized).not.toContain("synthetic-credential");
+      expect(sanitized).toContain("visible");
+    }
+  });
+
   it("recognizes serialized whitespace before structural string quotes", () => {
     for (const whitespace of ["\n", "\r", "\t", " \n\t "]) {
       const input = JSON.stringify(`{"note":${whitespace}"}","token":null,"password":"FIRST PRIVATE_SUFFIX","other":"visible"}`);

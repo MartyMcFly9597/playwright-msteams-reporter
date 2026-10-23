@@ -148,7 +148,7 @@ function isQuoteOpening(value: string, index: number, quote: string, serializedD
     } else break;
   }
   if (cursor < 0 || [":", "{", "[", ",", "="].includes(value[cursor])) return true;
-  if (quote !== '"') return false;
+  if (quote !== '"' && /[A-Za-z0-9]/.test(value[index - 1] ?? "")) return false;
   for (let next = index + 1; next < value.length && !/[\r\n{}]/.test(value[next]); next += 1) {
     if (isDelimiterQuote(value, next, quote, 0)) return true;
   }
@@ -172,6 +172,7 @@ function advanceStructuredContext(value: string, end: number, serializedDepth: n
     }
     if ((character === '"' || character === "'" || character === "`") &&
       isDelimiterQuote(value, index, character, serializedDepth)) {
+      if (state.containers.length === 0 && character !== '"' && /^\s*[\[{]/.test(value.slice(index + 1))) continue;
       if (isQuoteOpening(value, index, character, serializedDepth)) state.quote = character;
     } else if (character === "{" || character === "[") state.containers.push(character);
     else if (character === "}" && state.containers.at(-1) === "{") state.containers.pop();
@@ -273,7 +274,7 @@ function builtinSanitize(value: string, webhookUrl?: string): string {
         ? "<redacted-authorization>" : match;
     })
     .replace(/\b(?:NTLM|Negotiate|ApiKey)\s+[^\s,;}"'\x60\\]+/gi, "<redacted-authorization>")
-    .replace(new RegExp(String.raw`(^|[^A-Za-z0-9]|\\[nrt])(${sensitiveFields.join("|")})\s*[:=]\s*Token\s+[^\s,;}"'\x60\\]+`, "gi"), "$1$2: <redacted-authorization>")
+    .replace(new RegExp(String.raw`(^|[^A-Za-z0-9]|\\[nrt])(${sensitiveFields.join("|")})(?:\s|\\[nrt])*[:=](?:\s|\\[nrt])*Token\s+[^\s,;}"'\x60\\]+`, "gi"), "$1$2: <redacted-authorization>")
     .replace(/\bToken\s+[A-Za-z0-9._~+/-]{24,}=*(?![A-Za-z0-9._~+/=-])/gi, "Token <redacted>")
     .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, "<redacted>");
   return redactSensitiveFields(redactedSchemes)
