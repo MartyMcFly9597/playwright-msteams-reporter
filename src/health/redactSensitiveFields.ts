@@ -111,6 +111,7 @@ function readKey(value: string, start: number, ends?: Map<number, number>): Key 
   if (["'", '"', "`"].includes(value[start])) {
     end = quoteEnd(value, start, 0, ends);
     if (end > value.length || value[end - 1] !== value[start]) return undefined;
+    if (!/[:=]/.test(value[skipWhitespace(value, end)] ?? "")) return undefined;
     name = value.slice(start + 1, end - 1);
     for (let layer = 0; layer < 16; layer += 1) {
       const decoded = decodeStringEscapes(name);
@@ -143,7 +144,8 @@ function isStructuredBoundary(value: string, index: number, ends?: Map<number, n
   return end > index && (end === value.length || /[\s,;)]/.test(value[end]));
 }
 
-function ownsQuotedSpan(value: string, start: number, end: number, structured: boolean, ends: Map<number, number>): boolean {
+function ownsQuotedSpan(value: string, start: number, end: number, structured: boolean, ends: Map<number, number>, jsonDocument: boolean): boolean {
+  if (jsonDocument) return true;
   const contents = decodeStringEscapes(value.slice(start + 1, end - 1)).decoded;
   const contentEnds = indexQuoteEnds(contents);
   for (let index = 0; index < contents.length;) {
@@ -208,6 +210,10 @@ export function redactSensitiveFields(
   let copiedThrough = 0;
   const containers: string[] = [];
   const ends = indexQuoteEnds(value);
+  let jsonDocument = false;
+  if (/^\s*[\[{]/.test(value)) {
+    try { JSON.parse(value); jsonDocument = true; } catch {}
+  }
   for (let index = 0; index < value.length;) {
     const character = value[index];
     let escapedWhitespaceKey = false;
@@ -219,7 +225,7 @@ export function redactSensitiveFields(
       const followingKey = readKey(value.slice(keyStart), 0);
       escapedWhitespaceKey = followingKey?.sensitive === true;
       if (!escapedWhitespaceKey) {
-        index = keyStart;
+        index = readKey(value, index + 1, ends)?.sensitive ? index + 1 : keyStart;
         continue;
       }
     }
@@ -265,9 +271,21 @@ export function redactSensitiveFields(
     if (key && !["'", '"', "`"].includes(character)) { index = key.end; continue; }
     if (["'", '"', "`"].includes(character)) {
       const end = quoteEnd(value, index, 0, ends);
-      if (end <= value.length && value[end - 1] === character && ownsQuotedSpan(value, index, end, containers.length > 0, ends)) {
+      if (end <= value.length && value[end - 1] === character && ownsQuotedSpan(value, index, end, containers.length > 0, ends, jsonDocument)) {
         const literal = value.slice(index, end);
         const contents = literal.slice(1, -1);
+        let literalAssignment = false;
+        const literalEnds = indexQuoteEnds(contents);
+        for (let cursor = contents.indexOf("\\"); cursor >= 0; cursor = contents.indexOf("\\", cursor + 1)) {
+          if (["'", '"', "`"].includes(contents[cursor + 1])) continue;
+          if (readKey(contents, cursor + 1, literalEnds)?.sensitive) { literalAssignment = true; break; }
+        }
+        if (literalAssignment) {
+          output += value.slice(copiedThrough, index) + "<redacted>";
+          copiedThrough = end;
+          index = end;
+          continue;
+        }
         const decoded = decodeStringEscapes(contents);
         const sanitized = sanitizeDecoded(decoded.decoded, layer + 1);
         const normalized = decoded.decoded

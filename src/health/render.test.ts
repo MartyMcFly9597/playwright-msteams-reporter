@@ -5,6 +5,39 @@ import { aggregateHealth, compileCategories } from "./aggregate";
 import { buildHealthMessage, sanitizeHealthText } from "./render";
 
 describe("health card rendering", () => {
+  it('keeps JSON message ownership when an embedded assignment ends empty', () => {
+    const input = JSON.stringify({ message: 'DB_PASSWORD=FIRST,region=PRIVATE_SUFFIX token=', other: 'visible' });
+    const sanitized = sanitizeHealthText(input, 8000, undefined, undefined, false);
+    expect(sanitized).not.toContain('PRIVATE_SUFFIX');
+    expect(sanitized).toContain('visible');
+  });
+
+  it.each([
+    String.raw`C:\token=PRIVATE_CREDENTIAL`,
+    String.raw`Error: 'C:\token=PRIVATE_CREDENTIAL'`,
+    JSON.stringify(String.raw`C:\token=PRIVATE_CREDENTIAL`),
+  ])('checks literal backslash assignments alongside decoded text: %s', input => {
+    expect(sanitizeHealthText(input, 8000, undefined, undefined, false)).not.toContain('PRIVATE_CREDENTIAL');
+  });
+
+  it('bounds closed escaped-quote diagnostics before clipping', () => {
+    const script = String.raw`
+      require.extensions['.ts'] = (module, filename) => module._compile(require('typescript').transpileModule(
+        require('node:fs').readFileSync(filename, 'utf8'), { compilerOptions: { module: 1, target: 9 } }
+      ).outputText, filename);
+      const clean = require('./src/health/render.ts').sanitizeHealthText;
+      clean(JSON.stringify(String.fromCharCode(92, 34).repeat(8000) + '"'), 300, undefined, undefined, false);
+      for (const quote of [String.fromCharCode(39), String.fromCharCode(96)]) {
+        clean('"' + (String.fromCharCode(92) + quote).repeat(16000) + 'x' + quote + ':"', 300, undefined, undefined, false);
+      }
+    `;
+    const result = spawnSync(process.execPath, ['-e', script], {
+      cwd: resolve(__dirname, '../..'), encoding: 'utf8', timeout: 5000,
+    });
+    expect({ error: result.error?.message, stderr: result.stderr, status: result.status })
+      .toEqual({ error: undefined, stderr: '', status: 0 });
+  });
+
   it.each([
     JSON.stringify({ message: "C:\\repo\nBearer\tPRIVATE_CREDENTIAL", other: "visible" }),
     JSON.stringify({ message: "C:\\repo\neyJheader.payload.PRIVATE_CREDENTIAL", other: "visible" }),
