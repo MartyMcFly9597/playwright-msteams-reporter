@@ -1,8 +1,357 @@
 import type { Suite } from "@playwright/test/reporter";
+import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 import { aggregateHealth, compileCategories } from "./aggregate";
 import { buildHealthMessage, sanitizeHealthText } from "./render";
 
 describe("health card rendering", () => {
+  it.each([
+    JSON.stringify({ message: "C:\\repo\nBearer\tPRIVATE_CREDENTIAL", other: "visible" }),
+    JSON.stringify({ message: "C:\\repo\neyJheader.payload.PRIVATE_CREDENTIAL", other: "visible" }),
+    String.raw`{"message":"C:\repo\1eyJheader.payload.PRIVATE_CREDENTIAL","other":"visible"}`,
+    String.raw`{"C:\pass\word":"PRIVATE_CREDENTIAL","other":"visible"}`,
+    String.raw`{"C:\to\ken":"PRIVATE_CREDENTIAL","other":"visible"}`,
+    String.raw`{"C:\build\repo\npassword":"PRIVATE_CREDENTIAL","other":"visible"}`,
+    String.raw`{"C:\build\1password":"PRIVATE_CREDENTIAL","other":"visible"}`,
+    String.raw`Error: 'C:\u0070assword=PRIVATE_CREDENTIAL'`,
+    String.raw`Error: 'C:\x20password=PRIVATE_CREDENTIAL'`,
+    String.raw`"C:\build\repo: pass\u0077ord=PRIVATE_CREDENTIAL"`,
+    String.raw`{"c:\pass\u0077ord":"PRIVATE_CREDENTIAL","other":"visible"}`,
+    String.raw`"C:\build\repo\npassword: " '#FIRST PRIVATE_CREDENTIAL'`,
+    JSON.stringify({ message: "C:\\build\\repo\nBearer PRIVATE_CREDENTIAL", other: "visible" }),
+  ])('redacts encoded credentials after a Windows drive prefix: %s', original => {
+    let input = original;
+    for (let layer = 0; layer <= 2; layer += 1) {
+      expect(sanitizeHealthText(input, 32000, undefined, undefined, false)).not.toContain('PRIVATE_CREDENTIAL');
+      input = JSON.stringify(input);
+    }
+  });
+
+  it.each([
+    ['mixed escape depths', String.raw`Log: \"pass\\u0077ord\": \"PRIVATE_CREDENTIAL\"`],
+    ['identity escaped key', String.raw`\"\p\a\s\s\w\o\r\d\"=\"PRIVATE_CREDENTIAL\"`],
+    ['codepoint escaped key', String.raw`\"pass\u{77}ord\"=\"PRIVATE_CREDENTIAL\"`],
+    ['escaped quoted scheme', String.raw`\"Be\u0061rer PRIVATE_CREDENTIAL\"`],
+    ['newline empty assignment', String.raw`Retrying, 'til ready:\npassword: '#FIRST PRIVATE_SUFFIX'`],
+    ['return empty assignment', String.raw`Retrying, 'til ready:\rpassword: '#FIRST PRIVATE_SUFFIX'`],
+    ['tab empty assignment', String.raw`Retrying, 'til ready:\tpassword: '#FIRST PRIVATE_SUFFIX'`],
+    ['quoted empty assignment', String.raw`Retrying, 'til ready: "password": '#FIRST PRIVATE_SUFFIX'`],
+    ['decoded quoted empty assignment', String.raw`Retrying, 'til ready:\n"pass\u0077ord": '#FIRST PRIVATE_SUFFIX'`],
+    ['return quoted empty assignment', String.raw`Retrying, 'til ready:\r"password": '#FIRST PRIVATE_SUFFIX'`],
+    ['tab quoted empty assignment', String.raw`Retrying, 'til ready:\t"password": '#FIRST PRIVATE_SUFFIX'`],
+    ['malformed encoded key', String.raw`{"pass\u{110000}word":"PRIVATE_CREDENTIAL","other":"visible"}`],
+    ['invalid hex before assignment', String.raw`"\xZZpassword=PRIVATE_CREDENTIAL"`],
+    ['invalid unicode scheme separator', String.raw`Error: 'Be\u0061rer\u{110000} PRIVATE_CREDENTIAL'`],
+  ])('final candidates: fails closed for %s', (_name, original) => {
+    let input = original;
+    for (let layer = 0; layer <= 2; layer += 1) {
+      const sanitized = sanitizeHealthText(input, 32000, undefined, undefined, false);
+      expect(sanitized).not.toContain('PRIVATE_CREDENTIAL');
+      expect(sanitized).not.toContain('PRIVATE_SUFFIX');
+      if (original.includes('"other":"visible"')) expect(sanitized).toContain('visible');
+      input = JSON.stringify(input);
+    }
+  });
+
+  it.each([
+    String.raw`D:\a\repo\tests\home.png`,
+    String.raw`"C:\build\runner\tests\home.png"`,
+    String.raw`Error: 'D:\a\repo\tests\home.png'`,
+  ])('final candidates: preserves nonsensitive path or malformed diagnostic %s', input => {
+    expect(sanitizeHealthText(input, 8000, undefined, undefined, false)).toBe(input);
+  });
+
+  it('final candidates: omits invalid quoted diagnostics even without a decoded-text change', () => {
+    expect(sanitizeHealthText(String.raw`"\xZZordinary"`, 8000, undefined, undefined, false)).toBe('<redacted>');
+  });
+
+  it('final candidates: bounds unrecognized backslash runs', () => {
+    const script = String.raw`
+      require.extensions['.ts'] = (module, filename) => module._compile(require('typescript').transpileModule(
+        require('node:fs').readFileSync(filename, 'utf8'), { compilerOptions: { module: 1, target: 9 } }
+      ).outputText, filename);
+      const input = String.fromCharCode(92).repeat(100000) + 'ordinary text';
+      const start = performance.now();
+      const preserved = require('./src/health/render.ts').sanitizeHealthText(input, input.length, undefined, undefined, false) === input;
+      console.log(JSON.stringify({ milliseconds: performance.now() - start, preserved }));
+    `;
+    const result = spawnSync(process.execPath, ['-e', script], {
+      cwd: resolve(__dirname, '../..'), encoding: 'utf8', timeout: 5000,
+    });
+    expect({ error: result.error?.message, stderr: result.stderr, status: result.status }).toEqual({ error: undefined, stderr: '', status: 0 });
+    expect(JSON.parse(result.stdout).preserved).toBe(true);
+    expect(JSON.parse(result.stdout).milliseconds).toBeLessThan(4000);
+  });
+
+  it.each([
+    ['truncated pretty JSON', String.raw`Received: "{\\n  \\\"password\\\": \\\"FIRST PRIVATE_SUFFIX\\\",\\n  \\\"other\\\": \\\"visible\\\"`],
+    ['bare escaped fragment', String.raw`Log: \\\"password\\\": \\\"PRIVATE_SUFFIX\\\"`],
+  ])('final review: bounded escaped layers for %s', (name, original) => {
+    expect(original).toContain(String.raw`\\\"password\\\"`);
+    if (name === 'truncated pretty JSON') {
+      expect(original.startsWith('Received: "{')).toBe(true);
+      expect(original).toContain(String.raw`\\n`);
+      expect(original.endsWith(String.raw`\\\"`)).toBe(true);
+    }
+    let input = original;
+    for (let layer = 0; layer <= 4; layer += 1) {
+      expect(sanitizeHealthText(input, 32000, undefined, undefined, false)).not.toContain('PRIVATE_SUFFIX');
+      input = JSON.stringify(input);
+    }
+  });
+
+  it.each([
+    ['hex assignment', String.raw`"password\x3dPRIVATE_CREDENTIAL"`],
+    ['hex scheme', String.raw`"Be\x61rer PRIVATE_CREDENTIAL"`],
+    ['unicode single assignment', String.raw`Error: 'pass\u0077ord=PRIVATE_CREDENTIAL'`],
+    ['unicode backtick assignment', 'Error: `pass\\u0077ord=PRIVATE_CREDENTIAL`'],
+    ['unicode single scheme', String.raw`Error: 'Be\u0061rer PRIVATE_CREDENTIAL'`],
+    ['unicode backtick scheme', 'Error: `Be\\u0061rer PRIVATE_CREDENTIAL`'],
+    ['escaped apostrophe assignment', String.raw`\'password\'=\'PRIVATE_CREDENTIAL\'`],
+    ['invalid hex after recognized assignment', String.raw`"password=FIRST\xZZ PRIVATE_CREDENTIAL"`],
+    ['invalid unicode after recognized scheme', String.raw`Error: 'Be\u0061rer FIRST\u{110000} PRIVATE_CREDENTIAL'`],
+  ])('final review: safely decodes JS diagnostic %s', (_name, original) => {
+    let input = original;
+    for (let layer = 0; layer <= 2; layer += 1) {
+      expect(sanitizeHealthText(input, 16000, undefined, undefined, false)).not.toContain('PRIVATE_CREDENTIAL');
+      input = JSON.stringify(input);
+    }
+  });
+
+  it('final review: preserves arbitrary nonsensitive password suffixes', () => {
+    for (const input of ['Notapassword=visible', String.raw`"Notapassword\x3dvisible"`, String.raw`'Notapassword\u003dvisible'`]) {
+      expect(sanitizeHealthText(input, 8000, undefined, undefined, false)).toBe(input);
+    }
+  });
+
+  it.each([
+    ['escaped scheme', String.raw`{"message":"Be\u0061rer PRIVATE_CREDENTIAL","other":"visible"}`, 'PRIVATE_CREDENTIAL'],
+    ['escaped URL', String.raw`{"message":"https:\/\/alice:PRIVATE_PASSWORD@localhost/path","other":"visible"}`, 'PRIVATE_PASSWORD'],
+  ])('remaining audit: full decoded pipeline for %s', (_name, original, secret) => {
+    let input = original;
+    for (let layer = 0; layer <= 2; layer += 1) {
+      const sanitized = sanitizeHealthText(input, 8000, undefined, undefined, false);
+      expect(sanitized).not.toContain(secret);
+      expect(sanitized).toContain('visible');
+      input = JSON.stringify(input);
+    }
+  });
+
+  it.each([
+    ["Retrying, 'til ready: password: '#FIRST PRIVATE_SUFFIX'", 'PRIVATE_SUFFIX'],
+    ['Unexpected " in password: "#FIRST PRIVATE_SUFFIX"', 'PRIVATE_SUFFIX'],
+    ["sh -c 'PASSWORD='$hunter2' npm test'", 'hunter2'],
+  ])('remaining audit: empty sensitive assignment quote ownership in %s', (input, secret) => {
+    expect(sanitizeHealthText(input, 8000, undefined, undefined, false)).not.toContain(secret);
+  });
+
+  it('remaining audit: preserves Windows paths without exposing escaped newline keys', () => {
+    const input = String.raw`D:\a\repo\tests\home.png; rerun with --update-snapshots`;
+    expect(sanitizeHealthText(input, 8000, undefined, undefined, false)).toBe(input);
+    for (const prefix of [String.raw`\n`, String.raw`\r`, String.raw`\t`, String.raw`\n\r\t `]) {
+      expect(sanitizeHealthText(`stderr: Starting${prefix}password=PRIVATE_SUFFIX`, 8000, undefined, undefined, false)).not.toContain('PRIVATE_SUFFIX');
+    }
+  });
+
+  it('remaining audit: bounds repeated escaped whitespace lookahead', () => {
+    const script = String.raw`
+      require.extensions['.ts'] = (module, filename) => module._compile(require('typescript').transpileModule(
+        require('node:fs').readFileSync(filename, 'utf8'), { compilerOptions: { module: 1, target: 9 } }
+      ).outputText, filename);
+      const clean = require('./src/health/render.ts').sanitizeHealthText;
+      const prefix = String.fromCharCode(92, 110).repeat(50000);
+      const input = prefix + 'ordinary text';
+      const start = performance.now();
+      const preserved = clean(input, input.length, undefined, undefined, false) === input;
+      const hidden = clean(prefix + 'password=PRIVATE_SUFFIX', input.length, undefined, undefined, false).includes('PRIVATE_SUFFIX') === false;
+      console.log(JSON.stringify({ milliseconds: performance.now() - start, preserved, hidden }));
+    `;
+    const result = spawnSync(process.execPath, ['-e', script], {
+      cwd: resolve(__dirname, '../..'), encoding: 'utf8', timeout: 5000,
+    });
+    expect({ error: result.error?.message, stderr: result.stderr, status: result.status }).toEqual({ error: undefined, stderr: '', status: 0 });
+    expect(JSON.parse(result.stdout)).toEqual({ milliseconds: expect.any(Number), preserved: true, hidden: true });
+    expect(JSON.parse(result.stdout).milliseconds).toBeLessThan(4000);
+  });
+
+  it.each(['DBPassword', 'APISecret', 'JWTToken', 'AWSSecretAccessKey'])(
+    'remaining audit: normalizes acronym-prefixed field %s', name => {
+      const sanitized = sanitizeHealthText(JSON.stringify({ [name]: 'PRIVATE_SUFFIX', other: 'visible' }), 8000, undefined, undefined, false);
+      expect(sanitized).not.toContain('PRIVATE_SUFFIX');
+      expect(sanitized).toContain('visible');
+      expect(sanitizeHealthText('Notapassword=visible', 8000, undefined, undefined, false)).toBe('Notapassword=visible');
+    }
+  );
+
+  it('remaining audit: invokes the custom callback once after decoded builtins and sanitizes its result', () => {
+    const custom = jest.fn((text: string) => {
+      expect(text).not.toContain('PRIVATE_CREDENTIAL');
+      expect(text).toContain('visible');
+      return String.raw`{"message":"Be\u0061rer CALLBACK_CREDENTIAL","other":"visible"}`;
+    });
+    const sanitized = sanitizeHealthText(String.raw`{"message":"Be\u0061rer PRIVATE_CREDENTIAL","other":"visible"}`, 8000, undefined, custom, false);
+    expect(custom).toHaveBeenCalledTimes(1);
+    expect(sanitized).not.toContain('CALLBACK_CREDENTIAL');
+    expect(sanitized).toContain('visible');
+  });
+
+  it.each([
+    ['quoted command argument', 'Invalid argument "--password=hunter2": unexpected value', 'hunter2'],
+    ['assignment-shaped object key', "{'token=abc123': bad}", 'abc123'],
+    ['prose apostrophe before quoted value', "Retrying, 'til ready: password: 'FIRST PRIVATE_SUFFIX'", 'PRIVATE_SUFFIX'],
+    ['stray quote before quoted value', 'Unexpected " in password: "FIRST PRIVATE_SUFFIX"', 'PRIVATE_SUFFIX'],
+    ['shell quote concatenation', "Command failed: sh -c 'PASSWORD='hunter2' npm test'", 'hunter2'],
+    ['apostrophe inside diagnostic wrapper', `Error: '{"password":"it's PRIVATE_SUFFIX","other":"visible"}'`, 'PRIVATE_SUFFIX'],
+    ['encoded single-quoted key', String.raw`{'pass\u0077ord':'PRIVATE_SUFFIX','other':'visible'}`, 'PRIVATE_SUFFIX'],
+    ['truncated escaped JSON wrapper', String.raw`Received: "{\n  \"password\": \"FIRST PRIVATE_SUFFIX\",\n  \"other\": \"visible\"`, 'PRIVATE_SUFFIX'],
+    ['escaped field fragment', String.raw`Log: \"password\": \"FIRST PRIVATE_SUFFIX\"`, 'PRIVATE_SUFFIX'],
+    ['literal escaped log newline', String.raw`stderr: Starting\npassword=hunter2`, 'hunter2'],
+    ['multiword connection password', 'Server=db;User Id=sa;Password=correct horse battery;Database=app', 'horse battery'],
+  ])("review regression: %s", (_name, input, secret) => {
+    const sanitized = sanitizeHealthText(input, 8000, undefined, undefined, false);
+    expect(sanitized).not.toContain(secret);
+    if (input.includes('"other":"visible"')) expect(sanitized).toContain('visible');
+    if (input.startsWith('Server=')) expect(sanitized).toContain('Database=app');
+  });
+
+  it.each(['Authorization: Bearer secret1', 'Cookie: session=secret1'])('review regression: compact sibling after %s', message => {
+    const sanitized = sanitizeHealthText(JSON.stringify({ message, other: 'visible' }), 8000, undefined, undefined, false);
+    expect(sanitized).not.toContain('secret1');
+    expect(sanitized).toContain('visible');
+  });
+
+  it.each(['single', 'double'])('review regression: bounded malformed %s quote scanning', quote => {
+    const script = String.raw`
+      require.extensions['.ts'] = (module, filename) => module._compile(require('typescript').transpileModule(
+        require('node:fs').readFileSync(filename, 'utf8'), { compilerOptions: { module: 1, target: 9 } }
+      ).outputText, filename);
+      const input = process.argv[1] === 'single' ? String.fromCharCode(92, 39).repeat(50000) + 'x' : '"' + String.fromCharCode(92, 34).repeat(100000);
+      const start = performance.now();
+      require('./src/health/render.ts').sanitizeHealthText(input, 1000, undefined, undefined, false);
+      console.log(JSON.stringify({ milliseconds: performance.now() - start, length: input.length }));
+    `;
+    const result = spawnSync(process.execPath, ['-e', script, quote], {
+      cwd: resolve(__dirname, '../..'), encoding: 'utf8', timeout: 5000,
+    });
+    expect({ error: result.error?.message, stderr: result.stderr, status: result.status }).toEqual({ error: undefined, stderr: '', status: 0 });
+    expect(JSON.parse(result.stdout).milliseconds).toBeLessThan(4000);
+  });
+
+  it("owns secret boundaries within each decoded diagnostic layer", () => {
+    const inputs = [
+      String.raw`DB_PASSWORD=\FIRST"PRIVATE_SUFFIX`,
+      JSON.stringify({ message: 'DB_PASSWORD: "FIRST",PRIVATE_SUFFIX', other: "visible" }),
+      JSON.stringify({ log: "password=secret1\nclient_secret=FIRST PRIVATE_SUFFIX", other: "visible" }),
+      String.raw`{"pass\u0077ord":"PRIVATE_SUFFIX","other":"visible"}`,
+      JSON.stringify(String.raw`{'password':'FIRST\' PRIVATE_SUFFIX','other':'visible'}`),
+      JSON.stringify({ message: "{'token':null,'password':'FIRST PRIVATE_SUFFIX'}", other: "visible" }),
+      'password=a,"b {"token":null,"password":"FIRST PRIVATE_SUFFIX","other":"visible"}',
+      '{password:secret1,client_secret:"FIRST PRIVATE_SUFFIX",other:"visible"}',
+      `Retrying, 'til ready: {"token":null,"password":"FIRST PRIVATE_SUFFIX","other":"visible"}`,
+    ];
+    for (const input of inputs) {
+      const sanitized = sanitizeHealthText(input, 4000, undefined, undefined, false);
+      expect({ input, sanitized }).toEqual({ input, sanitized: expect.not.stringContaining("PRIVATE_SUFFIX") });
+      if (input.includes("visible")) expect(sanitized).toContain("visible");
+    }
+  });
+
+  it("keeps diagnostic punctuation outside the following secret container", () => {
+    for (const quote of ["'", '"', "`"]) {
+      for (const punctuation of ["{", "["]) {
+        const input = `Unexpected token ${quote}${punctuation}${quote} in {"token":null,"password":"FIRST PRIVATE_SUFFIX","other":"visible"}`;
+        const sanitized = sanitizeHealthText(input, 4000, undefined, undefined, false);
+        expect(sanitized).not.toContain("PRIVATE_SUFFIX");
+        expect(sanitized).toContain("visible");
+      }
+    }
+  });
+
+  it("redacts the cross-family layer ownership matrix", () => {
+    for (const predecessor of ["null", "[]", '{"scheme":"custom"}']) {
+      for (const separator of [":", "="]) {
+        for (const prefix of ["", "Received: ", `Retrying, 'til ready: `, `Unexpected token '{' in `]) {
+          let input = `${prefix}{"token"${separator}${predecessor},"password"${separator}"FIRST PRIVATE_SUFFIX","other":"visible"}`;
+          for (let layer = 0; layer <= 2; layer += 1) {
+            const sanitized = sanitizeHealthText(input, 8000, undefined, undefined, false);
+            expect({ input, sanitized }).toEqual({ input, sanitized: expect.not.stringContaining("PRIVATE_SUFFIX") });
+            expect(sanitized).toContain("visible");
+            input = JSON.stringify(input);
+          }
+        }
+      }
+    }
+  });
+
+  it("does not let ambiguous prose quotes own a following diagnostic container", () => {
+    for (const prefix of [
+      'Expected 27" monitor. Received: ',
+      `Retrying, 'til ready: `,
+      'A stray " before the object: ',
+      `Error: 'til ready: `,
+      '" before the object: ',
+      String.raw`Path "C:\work\" then: `,
+    ]) {
+      for (const quote of ['"', "'", "`"]) {
+        let input = `${prefix}{${quote}token${quote}:null,${quote}password${quote}:${quote}FIRST PRIVATE_SUFFIX${quote},${quote}other${quote}:${quote}visible${quote}}`;
+        for (let layer = 0; layer <= 2; layer += 1) {
+          const sanitized = sanitizeHealthText(input, 8000, undefined, undefined, false);
+          expect({ input, sanitized }).toEqual({ input, sanitized: expect.not.stringContaining("PRIVATE_SUFFIX") });
+          expect(sanitized).toContain("visible");
+          input = JSON.stringify(input);
+        }
+      }
+    }
+  });
+
+  it("redacts encoded keys and escaped non-JSON value quotes across layers", () => {
+    for (const original of [
+      String.raw`{"pass\u0077ord":"FIRST PRIVATE_SUFFIX","other":"visible"}`,
+      String.raw`{'token':null,'password':'FIRST\' PRIVATE_SUFFIX','other':'visible'}`,
+      '{`token`:null,`password`:`FIRST\\` PRIVATE_SUFFIX`,`other`:`visible`}',
+      String.raw`{"token":null,"password":"FIRST\\\" PRIVATE_SUFFIX","other":"visible"}`,
+    ]) {
+      let input = original;
+      for (let layer = 0; layer <= 2; layer += 1) {
+        const sanitized = sanitizeHealthText(input, 8000, undefined, undefined, false);
+        expect({ input, sanitized }).toEqual({ input, sanitized: expect.not.stringContaining("PRIVATE_SUFFIX") });
+        expect(sanitized).toContain("visible");
+        input = JSON.stringify(input);
+      }
+    }
+  });
+
+  it("fails closed on malformed escaped containers", () => {
+    for (const input of [
+      String.raw`Log: {\"token\":null,\"password\":\"FIRST PRIVATE_SUFFIX\",\"note\":\q}`,
+      String.raw`Log: {\"pass\u0077ord\":\"FIRST PRIVATE_SUFFIX\",\"note\":\q}`,
+    ]) {
+      expect(sanitizeHealthText(input, 4000, undefined, undefined, false)).not.toContain("PRIVATE_SUFFIX");
+    }
+  });
+
+  it("does not leak attached closing delimiters from unquoted structured secrets", () => {
+    for (const password of ["FIRST]PRIVATE_SUFFIX", "FIRST}PRIVATE_SUFFIX", "FIRST]}PRIVATE_SUFFIX", `FIRST${"]".repeat(40000)}PRIVATE_SUFFIX`]) {
+      let input = `{password:${password},other:"visible"}`;
+      for (let layer = 0; layer <= 2; layer += 1) {
+        const sanitized = sanitizeHealthText(input, 8000, undefined, undefined, false);
+        expect({ input, sanitized }).toEqual({ input, sanitized: expect.not.stringContaining("PRIVATE_SUFFIX") });
+        expect(sanitized).toContain("visible");
+        input = JSON.stringify(input);
+      }
+    }
+  });
+
+  it("bounds string decoding while preserving outer diagnostic siblings", () => {
+    let message = '{"password":"FIRST PRIVATE_SUFFIX"}';
+    for (let layer = 0; layer < 18; layer += 1) message = JSON.stringify(message);
+    const input = JSON.stringify({ message, other: "visible" });
+    const sanitized = sanitizeHealthText(input, input.length, undefined, undefined, false);
+    expect(sanitized).not.toContain("PRIVATE_SUFFIX");
+    expect(sanitized).toContain("visible");
+    expect(sanitized.length).toBeLessThan(input.length);
+  });
+
   it("preserves secret boundaries after single-quoted diagnostic punctuation", () => {
     for (const punctuation of [":", "=", ","]) {
       const input = `Unexpected token '${punctuation}' in {"password":"FIRST","client_secret":"NEXT PRIVATE_SUFFIX","other":"visible"}`;

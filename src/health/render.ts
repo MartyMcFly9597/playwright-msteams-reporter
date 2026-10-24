@@ -1,6 +1,7 @@
 import type { TestCase } from "@playwright/test/reporter";
 import type { HealthSummary } from "./aggregate";
 import { redactWebhookUrl } from "../utils/redactWebhookUrl";
+import { redactSensitiveFields, sensitiveFieldPattern } from "./redactSensitiveFields";
 
 export interface HealthDisplayOptions {
   /** Card heading. Defaults to `Test Run Health`. */
@@ -59,15 +60,6 @@ function formatDuration(ms: number): string {
   return `${seconds}s`;
 }
 
-const sensitiveFields = [
-  "ocp-apim-subscription-key", "x-functions-key", "x-api-key", "client_secret", "client-secret",
-  "db_password", "db-password", "access_token", "refresh_token", "id_token", "set-cookie",
-  "access[_-]?token", "refresh[_-]?token", "id[_-]?token", "client[_-]?secret", "api[_-]?key",
-  "auth[_-]?token", "secret[_-]?key", "private[_-]?token", "secret[_-]?access[_-]?key",
-  "sharedaccesskey", "accountkey", "authorization", "signature", "password", "passwd", "secret",
-  "cookie", "api-key", "api_key", "token", "pwd", "sig", "credential", "access token", "auth token",
-];
-const sensitiveFieldStart = new RegExp(String.raw`(^|[^A-Za-z0-9]|\\[nrt])((?:\\)*)(?:(['"\x60])([A-Za-z0-9_. -]+)((?:\\)*)\3((?:\\)*)|(${sensitiveFields.join("|")})((?:\\)*))(?:\s|\\[nrt])*([:=])(?:\s|\\[nrt])*((?:\\)*)(['"\x60])?`, "gi");
 const homePathPattern = /\b[A-Z]:(?:[\\/]+)Users[\\/]+[^\\/"'\r\n]+|\/(?:Users|home)\/[^/"'\r\n]+/gi;
 const markdownCharacters = new Set(["\\", "`", "*", "_", "{", "}", "[", "]", "(", ")", "#", "+", "!", "|", ">"]);
 
@@ -88,183 +80,7 @@ function sanitizeUrl(value: string): string {
   }
 }
 
-function isDelimiterQuote(value: string, index: number, quote: string, baseBackslashes: number): boolean {
-  if (value[index] !== quote) return false;
-  const backslashes = countBackslashesBefore(value, index);
-  if (quote !== '"') return backslashes % 2 === 0;
-  const cycle = 2 * (baseBackslashes + 1);
-  return backslashes >= baseBackslashes && (backslashes - baseBackslashes) % cycle === 0;
-}
-
-function findQuotedSecretEnd(value: string, start: number, quote: string, baseBackslashes: number): number {
-  for (let index = start; index < value.length; index += 1) {
-    if (isDelimiterQuote(value, index, quote, baseBackslashes)) return index + 1;
-  }
-  return value.length;
-}
-
-function countBackslashesBefore(value: string, index: number): number {
-  let count = 0;
-  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) count += 1;
-  return count;
-}
-
-function findStructuredSecretEnd(value: string, start: number, baseBackslashes = 0): number {
-  const closing: string[] = [value[start] === "[" ? "]" : "}"];
-  let quote: string | undefined;
-  for (let index = start + 1; index < value.length; index += 1) {
-    const character = value[index];
-    if (quote) {
-      if (isDelimiterQuote(value, index, quote, baseBackslashes)) quote = undefined;
-      continue;
-    }
-    if (character === '"' || character === "'" || character === "`") {
-      if (isDelimiterQuote(value, index, character, baseBackslashes)) quote = character;
-    }
-    else if (character === "[") closing.push("]");
-    else if (character === "{") closing.push("}");
-    else if (character === closing[closing.length - 1]) {
-      closing.pop();
-      if (!closing.length) return index + 1;
-    }
-  }
-  return value.length;
-}
-
-interface StructuredContextState {
-  index: number;
-  containers: Array<"{" | "[">;
-  quote?: string;
-}
-
-function isQuoteOpening(value: string, index: number, quote: string, serializedDepth: number): boolean {
-  let cursor = index - 1;
-  while (cursor >= 0 && value[cursor] === "\\") cursor -= 1;
-  while (cursor >= 0) {
-    if (/\s/.test(value[cursor])) cursor -= 1;
-    else if (serializedDepth > 0 && /[nrt]/.test(value[cursor]) &&
-      countBackslashesBefore(value, cursor) === (serializedDepth + 1) / 2) {
-      cursor -= (serializedDepth + 1) / 2 + 1;
-    } else break;
-  }
-  if (cursor < 0 || [":", "{", "[", ",", "="].includes(value[cursor])) return true;
-  if (quote !== '"' && /[A-Za-z0-9]/.test(value[index - 1] ?? "")) return false;
-  for (let next = index + 1; next < value.length && !/[\r\n{}]/.test(value[next]); next += 1) {
-    if (isDelimiterQuote(value, next, quote, 0)) return true;
-  }
-  return false;
-}
-
-function isSensitiveFieldName(fieldName: string): boolean {
-  const normalized = fieldName.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
-  return sensitiveFields.some(field => {
-    const pattern = new RegExp(String.raw`(?:^|[^a-z0-9])(?:${field})$`, "i");
-    return pattern.test(fieldName) || pattern.test(normalized);
-  });
-}
-
-function advanceStructuredContext(value: string, end: number, serializedDepth: number, state: StructuredContextState): boolean {
-  for (let index = state.index; index < end; index += 1) {
-    const character = value[index];
-    if (state.quote) {
-      if (isDelimiterQuote(value, index, state.quote, serializedDepth)) state.quote = undefined;
-      continue;
-    }
-    if ((character === '"' || character === "'" || character === "`") &&
-      isDelimiterQuote(value, index, character, serializedDepth)) {
-      if (state.containers.length === 0 && character !== '"' && /^\s*[\[{]/.test(value.slice(index + 1))) continue;
-      if (isQuoteOpening(value, index, character, serializedDepth)) state.quote = character;
-    } else if (character === "{" || character === "[") state.containers.push(character);
-    else if (character === "}" && state.containers.at(-1) === "{") state.containers.pop();
-    else if (character === "]" && state.containers.at(-1) === "[") state.containers.pop();
-  }
-  state.index = end;
-  return state.containers.at(-1) === "{" && state.quote === undefined;
-}
-
-function findUnquotedSecretEnd(value: string, start: number, serializedDepth: number, structuredContext = false, serializedStringContext = false): number {
-  if (structuredContext) {
-    const scalar = /^(?:null|true|false|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(value.slice(start));
-    const scalarEnd = scalar ? start + scalar[0].length : start;
-    const scalarBoundary = serializedDepth > 0 ? /^(?:\s|\\[nrt])*[,}\]]/ : /^\s*[,}\]]/;
-    if (scalar && scalarBoundary.test(value.slice(scalarEnd))) return scalarEnd;
-  }
-  let index = start;
-  while (index < value.length) {
-    if (serializedStringContext && isDelimiterQuote(value, index, '"', 0)) return index;
-    if (value[index] === "[" || value[index] === "{") {
-      const structuredEnd = findStructuredSecretEnd(value, index, serializedDepth);
-      const escapedWhitespace = structuredContext && serializedDepth > 0 && /^\\[nrt]/.test(value.slice(structuredEnd));
-      if (structuredEnd === value.length || /\s/.test(value[structuredEnd]) || escapedWhitespace ||
-        (structuredContext && /[,}\]"']/.test(value[structuredEnd])) ||
-        (structuredContext && /^\\+["']/.test(value.slice(structuredEnd)))) return structuredEnd;
-      index = structuredEnd;
-      continue;
-    }
-    if (serializedDepth > 0 && isDelimiterQuote(value, index, '"', 0)) return index;
-    if (/\s/.test(value[index])) return index;
-    if (structuredContext && value[index] === "," && /^,(?:\s|\\[nrt])*(?:\\)?["'][^"'\r\n]+(?:\\)?["'](?:\s|\\[nrt])*:/.test(value.slice(index))) return index;
-    index += 1;
-  }
-  return value.length;
-}
-
-function findSecretEnd(value: string, start: number, quote?: string, serializedDepth = 0, structuredContext = false, serializedStringContext = false): number {
-  if (!quote) return findUnquotedSecretEnd(value, start, serializedDepth, structuredContext, serializedStringContext);
-  const quotedEnd = findQuotedSecretEnd(value, start, quote, serializedDepth);
-  if (quotedEnd >= value.length || /\s/.test(value[quotedEnd])) return quotedEnd;
-  if (isValueBoundary(value, quotedEnd, serializedDepth, structuredContext, serializedStringContext)) return quotedEnd;
-  return findUnquotedSecretEnd(value, quotedEnd, serializedDepth, structuredContext, serializedStringContext);
-}
-
-function isValueBoundary(value: string, index: number, serializedDepth: number, structuredContext: boolean, serializedStringContext: boolean): boolean {
-  if (serializedStringContext && isDelimiterQuote(value, index, '"', 0)) return true;
-  if (serializedDepth > 0 && isDelimiterQuote(value, index, '"', 0)) return true;
-  if (structuredContext && /[,}\]]/.test(value[index])) return true;
-  if (!structuredContext && /[;)]/.test(value[index])) return true;
-  return false;
-}
-
-function redactSensitiveFields(value: string): string {
-  let output = "";
-  let copiedThrough = 0;
-  const contextByDepth = new Map<number, StructuredContextState>();
-  const outerStringState: StructuredContextState = { index: 0, containers: [] };
-  sensitiveFieldStart.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = sensitiveFieldStart.exec(value)) !== null) {
-    const keyQuote = match[3] ?? "";
-    const fieldName = match[4] ?? match[7];
-    if (keyQuote && !isSensitiveFieldName(fieldName)) {
-      sensitiveFieldStart.lastIndex = match.index + match[0].lastIndexOf(match[9]);
-      continue;
-    }
-    const suffixSlashes = match[5] ?? match[8] ?? "";
-    const postKeySlashes = match[6] ?? "";
-    const serializedDepth = Math.max(match[2].length, suffixSlashes.length, postKeySlashes.length, match[10].length);
-    const quote = match[11];
-    const keyStart = match.index + match[1].length + match[2].length;
-    const separator = match[9];
-    let context = contextByDepth.get(serializedDepth);
-    if (!context) {
-      context = { index: 0, containers: [] };
-      contextByDepth.set(serializedDepth, context);
-    }
-    advanceStructuredContext(value, keyStart, 0, outerStringState);
-    const structuredContext = separator === ":" && advanceStructuredContext(value, keyStart, serializedDepth, context);
-    const serializedStringContext = outerStringState.quote === '"';
-    const valueQuote = quote;
-    const valueEnd = serializedDepth >= 3 ? value.length : findSecretEnd(value, sensitiveFieldStart.lastIndex, valueQuote, serializedDepth, structuredContext, serializedStringContext);
-    advanceStructuredContext(value, valueEnd, 0, outerStringState);
-    for (const [depth, state] of contextByDepth) advanceStructuredContext(value, valueEnd, depth, state);
-    output += `${value.slice(copiedThrough, match.index)}${match[1]}${match[2]}${keyQuote}${fieldName}${keyQuote}${postKeySlashes}: <redacted>`;
-    copiedThrough = valueEnd;
-    sensitiveFieldStart.lastIndex = valueEnd;
-  }
-  return output + value.slice(copiedThrough);
-}
-
-function builtinSanitize(value: string, webhookUrl?: string): string {
+function builtinSanitize(value: string, webhookUrl?: string, layer = 0): string {
   const normalized = value.replace(/\u001b\[[0-9;]*m/g, "");
   const redactedSchemes = redactWebhookUrl(normalized, webhookUrl)
     .replace(/\bBearer\s+[^\s,;}"'\x60\\]+/gi, "Bearer <redacted>")
@@ -274,13 +90,11 @@ function builtinSanitize(value: string, webhookUrl?: string): string {
         ? "<redacted-authorization>" : match;
     })
     .replace(/\b(?:NTLM|Negotiate|ApiKey)\s+[^\s,;}"'\x60\\]+/gi, "<redacted-authorization>")
-    .replace(new RegExp(String.raw`(^|[^A-Za-z0-9]|\\[nrt])(${sensitiveFields.join("|")})(?:\s|\\[nrt])*[:=](?:\s|\\[nrt])*Token\s+[^\s,;}"'\x60\\]+`, "gi"), "$1$2: <redacted-authorization>")
+    .replace(new RegExp(String.raw`(^|[^A-Za-z0-9]|\\[nrt])(${sensitiveFieldPattern})(?:\s|\\[nrt])*[:=](?:\s|\\[nrt])*Token\s+[^\s,;}"'\x60\\]+`, "gi"), "$1$2: <redacted-authorization>")
     .replace(/\bToken\s+[A-Za-z0-9._~+/-]{24,}=*(?![A-Za-z0-9._~+/=-])/gi, "Token <redacted>")
     .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, "<redacted>");
-  return redactSensitiveFields(redactedSchemes)
-    .replace(/\bAuthorization\s*:\s*[^\r\n]+/gi, "Authorization: <redacted>")
+  return redactSensitiveFields(redactedSchemes, layer, (decoded, nextLayer) => builtinSanitize(decoded, webhookUrl, nextLayer))
     .replace(/\bDigest\s+(?=[a-z][\w-]*\*?\s*=)[^\r\n]*/gi, "<redacted-authorization>")
-    .replace(/\b(?:Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi, "<redacted-cookie>")
     .replace(/\b(?:AccountKey|SharedAccessKey|Ocp-Apim-Subscription-Key|x-functions-key)\s*=\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^;\s,}]+)/gi, "<redacted-key>")
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/gi, sanitizeUrl)
     .replace(/([?&;])(sv|se|sp|sr|sig|signature|skoid|sktid|skt|ske|sks|skv)=([^&#;\s]+)/gi, (_match, prefix: string, key: string) => `${prefix}${key}=<redacted>`)
