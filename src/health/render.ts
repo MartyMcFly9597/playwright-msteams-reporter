@@ -83,9 +83,11 @@ function sanitizeUrl(value: string): string {
 function builtinSanitize(value: string, webhookUrl?: string, layer = 0): string {
   const normalized = value.replace(/\u001b\[[0-9;]*m/g, "");
   const continuedCredential = (pattern: RegExp) => new RegExp(
-    pattern.source + String.raw`(?:\\+[^nrt\s,;}"'\x60\\][^\s,;}"'\x60\\]*)*`, pattern.flags
+    pattern.source + String.raw`(?:\\+(?:u\{[a-f0-9]{1,6}\}|[^nrt\s,;}"'\x60\\])[^\s,;}"'\x60\\]*)*`, pattern.flags
   );
-  const redactedSchemes = redactWebhookUrl(normalized, webhookUrl)
+  const decodedFields = redactSensitiveFields(redactWebhookUrl(normalized, webhookUrl), layer,
+    (decoded, nextLayer) => builtinSanitize(decoded, webhookUrl, nextLayer));
+  const redactedSchemes = decodedFields
     .replace(continuedCredential(/\bBearer\s+[^\s,;}"'\x60\\]+/gi), "Bearer <redacted>")
     .replace(continuedCredential(/\bBasic\s+([A-Za-z0-9+/]+=*)(?![A-Za-z0-9+/=])/gi), (match, credential: string) => {
       const decoded = Buffer.from(credential, "base64");
@@ -96,7 +98,7 @@ function builtinSanitize(value: string, webhookUrl?: string, layer = 0): string 
     .replace(new RegExp(String.raw`(^|[^A-Za-z0-9]|\\[nrt])(${sensitiveFieldPattern})(?:\s|\\[nrt])*[:=](?:\s|\\[nrt])*Token\s+[^\s,;}"'\x60\\]+`, "gi"), "$1$2: <redacted-authorization>")
     .replace(continuedCredential(/\bToken\s+[A-Za-z0-9._~+/-]{24,}=*(?![A-Za-z0-9._~+/=-])/gi), "Token <redacted>")
     .replace(continuedCredential(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g), "<redacted>");
-  return redactSensitiveFields(redactedSchemes, layer, (decoded, nextLayer) => builtinSanitize(decoded, webhookUrl, nextLayer))
+  return redactedSchemes
     .replace(/\bDigest\s+(?=[a-z][\w-]*\*?\s*=)[^\r\n]*/gi, "<redacted-authorization>")
     .replace(/\b(?:AccountKey|SharedAccessKey|Ocp-Apim-Subscription-Key|x-functions-key)\s*=\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^;\s,}]+)/gi, "<redacted-key>")
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/gi, sanitizeUrl)

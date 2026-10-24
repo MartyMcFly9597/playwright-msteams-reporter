@@ -5,6 +5,28 @@ import { aggregateHealth, compileCategories } from "./aggregate";
 import { buildHealthMessage, sanitizeHealthText } from "./render";
 
 describe("health card rendering", () => {
+  it.each(['ApiKey FIRST', 'Bearer FIRST', 'Basic YWxpY2U6', 'Token abcdefghijklmnopqrstuvwxyz'])
+  ('redacts code-point escape continuations before losing the scheme: %s', prefix => {
+    let input = JSON.stringify({ message: prefix + String.raw`\u{5f}PRIVATE_SUFFIX`, other: 'visible' });
+    for (let layer = 0; layer <= 2; layer += 1) {
+      const sanitized = sanitizeHealthText(input, 16000, undefined, undefined, false);
+      expect(sanitized).not.toContain('PRIVATE_SUFFIX');
+      expect(sanitized).toContain('visible');
+      input = JSON.stringify(input);
+    }
+  });
+
+  it.each(['ApiKey password', 'Bearer token', 'NTLM secret', 'Token abcdefghijklmnopqrstuvwxyz_password'])
+  ('classifies sensitive keys before replacing scheme text: %s', key => {
+    let input = JSON.stringify({ [key]: 'PRIVATE_CREDENTIAL', other: 'visible' });
+    for (let layer = 0; layer <= 2; layer += 1) {
+      const sanitized = sanitizeHealthText(input, 16000, undefined, undefined, false);
+      expect(sanitized).not.toContain('PRIVATE_CREDENTIAL');
+      expect(sanitized).toContain('visible');
+      input = JSON.stringify(input);
+    }
+  });
+
   it('does not treat a diagnostic brace as ownership of a later assignment', () => {
     for (const input of [
       'Unexpected token { in DB_PASSWORD=FIRST,region=PRIVATE_SUFFIX',
