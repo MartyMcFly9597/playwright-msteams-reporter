@@ -87,7 +87,7 @@ function builtinSanitize(value: string, webhookUrl?: string, layer = 0): string 
   );
   const redactedSchemes = redactWebhookUrl(normalized, webhookUrl)
     .replace(continuedCredential(/\bBearer\s+[^\s,;}"'\x60\\]+/gi), "Bearer <redacted>")
-    .replace(/\bBasic\s+([A-Za-z0-9+/]+=*)(?![A-Za-z0-9+/=])/gi, (match, credential: string) => {
+    .replace(continuedCredential(/\bBasic\s+([A-Za-z0-9+/]+=*)(?![A-Za-z0-9+/=])/gi), (match, credential: string) => {
       const decoded = Buffer.from(credential, "base64");
       return decoded.includes(58) && decoded.toString("base64").replace(/=+$/, "") === credential.replace(/=+$/, "")
         ? "<redacted-authorization>" : match;

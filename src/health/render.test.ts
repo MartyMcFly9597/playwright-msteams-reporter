@@ -5,6 +5,30 @@ import { aggregateHealth, compileCategories } from "./aggregate";
 import { buildHealthMessage, sanitizeHealthText } from "./render";
 
 describe("health card rendering", () => {
+  it('does not treat a diagnostic brace as ownership of a later assignment', () => {
+    for (const input of [
+      'Unexpected token { in DB_PASSWORD=FIRST,region=PRIVATE_SUFFIX',
+      'Unexpected token { in DB_PASSWORD: "FIRST",region=PRIVATE_SUFFIX',
+      'Unexpected token { in config, DB_PASSWORD=FIRST,region=PRIVATE_SUFFIX',
+      'Unexpected token {DB_PASSWORD=FIRST,region=PRIVATE_SUFFIX',
+    ]) {
+      expect(sanitizeHealthText(input, 8000, undefined, undefined, false)).not.toContain('PRIVATE_SUFFIX');
+    }
+  });
+
+  it.each([
+    String.raw`Basic YWxpY2U6\u00632VjcmV0`,
+    String.raw`Basic YWxpY2U6\/c2VjcmV0`,
+  ])('redacts escaped Basic credential continuations: %s', credential => {
+    let input = '{"message":"' + credential + '","other":"visible"}';
+    for (let layer = 0; layer <= 2; layer += 1) {
+      const sanitized = sanitizeHealthText(input, 16000, undefined, undefined, false);
+      expect(sanitized).not.toContain('2VjcmV0');
+      expect(sanitized).toContain('visible');
+      input = JSON.stringify(input);
+    }
+  });
+
   it('keeps string ownership in log-prefixed JSON fragments', () => {
     const object = JSON.stringify({ message: 'DB_PASSWORD=FIRST,region=PRIVATE_SUFFIX token=', other: 'visible' });
     for (const prefix of ['Received: ', 'Error output: ']) {

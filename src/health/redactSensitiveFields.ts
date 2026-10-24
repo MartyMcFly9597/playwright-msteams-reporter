@@ -53,7 +53,7 @@ function quoteEnd(value: string, start: number, slashes = 0, ends?: Map<number, 
   return value.length;
 }
 
-function containerEnd(value: string, start: number, slashes = 0, ends?: Map<number, number>): number {
+function containerEnd(value: string, start: number, slashes = 0, ends?: Map<number, number>, requireClosed = false): number {
   const closing = [value[start] === "{" ? "}" : "]"];
   let backslashes = 0;
   for (let index = start + 1; index < value.length; index += 1) {
@@ -72,7 +72,7 @@ function containerEnd(value: string, start: number, slashes = 0, ends?: Map<numb
     }
     backslashes = 0;
   }
-  return value.length;
+  return value.length + (requireClosed ? 1 : 0);
 }
 
 interface Key {
@@ -212,6 +212,7 @@ export function redactSensitiveFields(
   const ends = indexQuoteEnds(value);
   let jsonDocument = false;
   let fragmentCheckedThrough = 0;
+  let unclosedFragmentThrough = 0;
   if (/^\s*[\[{]/.test(value)) {
     try { JSON.parse(value); jsonDocument = true; } catch {}
   }
@@ -261,7 +262,9 @@ export function redactSensitiveFields(
       }
     }
     if (!jsonDocument && index >= fragmentCheckedThrough && (character === "{" || character === "[")) {
-      const end = containerEnd(value, index, 0, ends);
+      const boundary = containerEnd(value, index, 0, ends, true);
+      const end = Math.min(boundary, value.length);
+      if (boundary > value.length) unclosedFragmentThrough = value.length;
       fragmentCheckedThrough = end;
       const fragment = value.slice(index, end);
       let validFragment = false;
@@ -276,7 +279,10 @@ export function redactSensitiveFields(
     const key = readKey(value, index, ends);
     if (key?.sensitive) {
       const start = skipWhitespace(value, key.separator + 1);
-      const end = secretEnd(value, start, containers.at(-1) === "{", value[index - 1] ?? "", ends);
+      let previous = index - 1;
+      while (previous >= 0 && /\s/.test(value[previous])) previous -= 1;
+      const objectMember = index >= unclosedFragmentThrough && containers.at(-1) === "{" && /[{,]/.test(value[previous] ?? "");
+      const end = secretEnd(value, start, objectMember, value[index - 1] ?? "", ends);
       const keyText = value.slice(index, key.end);
       const safeKey = sanitizeDecoded(keyText, layer + 1);
       output += value.slice(copiedThrough, index) + safeKey + ": <redacted>";
