@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-24
+
+- Declare support for Node.js 22 or newer; CI verifies Node.js 22, 24, and 26.
+- Improve health-detail credential redaction across raw diagnostics, quoted values, JSON, and serialized strings, with bounded scans. Some heuristic matches are narrower to avoid redacting ordinary prose such as `Token refresh` and `Basic configuration`; sanitization remains defense in depth, not a guarantee that arbitrary diagnostics contain no secrets.
+- Correct native ESM default reporter imports and their TypeScript declarations while preserving CommonJS entry points. ESM default imports now resolve directly to the reporter class.
+
+### Behavior changes
+
+- Report failed runs without tests and notify on timed-out or interrupted runs even when no tests failed.
+- Invalid `webhookType` values now throw. An option explicitly set to `undefined` retains its default instead of overriding it; check existing configuration for reliance on the old behavior.
+
+- Validate reporter options, retain defaults when an option is `undefined`, and omit invalid or incomplete result links.
+- Pin CI actions, use Node.js 24 action runtimes, and stage beta npm releases for approval. The stable release workflow retains staged publishing and receives CI/runtime hardening.
+- Correct reporter configuration, supported behavior, and migration guidance.
+
 ## [0.4.0] - 2026-10-20
 
 - Health reporter: classify failures by error text. A built-in pattern flags Chromium navigation errors such as `net::ERR_NAME_NOT_RESOLVED` as `Network` / "App unreachable from this network" (environment-suspect) instead of developer review. Custom patterns load from a JSON file via `errorPatternsFile`.
