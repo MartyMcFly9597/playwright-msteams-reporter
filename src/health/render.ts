@@ -1,7 +1,7 @@
 import type { TestCase } from "@playwright/test/reporter";
 import type { HealthSummary } from "./aggregate";
 import { redactWebhookUrl } from "../utils/redactWebhookUrl";
-import { redactSensitiveFields, sensitiveFieldPattern } from "./redactSensitiveFields";
+import { decodeStringEscapes, redactSensitiveFields, sensitiveFieldPattern } from "./redactSensitiveFields";
 
 export interface HealthDisplayOptions {
   /** Card heading. Defaults to `Test Run Health`. */
@@ -82,28 +82,58 @@ function sanitizeUrl(value: string): string {
 
 function builtinSanitize(value: string, webhookUrl?: string, layer = 0): string {
   const normalized = value.replace(/\u001b\[[0-9;]*m/g, "");
+  const escapeAtom = String.raw`\\+(?:u\{[a-fA-F0-9]{1,6}\}|u[a-fA-F0-9]{4}|x[a-fA-F0-9]{2}|[^nrt\s,;}"'\x60\\])`;
+  const credentialAtom = String.raw`(?:[A-Za-z0-9._~+/=-]|${escapeAtom})`;
+  const escapedTail = String.raw`(?:${escapeAtom}[^\s,;}"'\x60\\]*)*`;
+  const decodedCredential = (candidate: string): string => {
+    for (let depth = 0; depth < 16; depth += 1) {
+      const decoded = decodeStringEscapes(candidate);
+      if (!decoded.valid || decoded.decoded === candidate) return decoded.decoded;
+      candidate = decoded.decoded;
+    }
+    return candidate;
+  };
   const continuedCredential = (pattern: RegExp) => new RegExp(
-    pattern.source + String.raw`(?:\\+(?:u\{[a-f0-9]{1,6}\}|[^nrt\s,;}"'\x60\\])[^\s,;}"'\x60\\]*)*`, pattern.flags
+    pattern.source + String.raw`(?:${escapeAtom}[^\s,;}"'\x60\\]*)*`, pattern.flags
   );
   const decodedFields = redactSensitiveFields(redactWebhookUrl(normalized, webhookUrl), layer,
     (decoded, nextLayer) => builtinSanitize(decoded, webhookUrl, nextLayer));
   const redactedSchemes = decodedFields
     .replace(continuedCredential(/\bBearer\s+[^\s,;}"'\x60\\]+/gi), "Bearer <redacted>")
-    .replace(continuedCredential(/\bBasic\s+([A-Za-z0-9+/]+=*)(?![A-Za-z0-9+/=])/gi), (match, credential: string) => {
-      const decoded = Buffer.from(credential, "base64");
-      return decoded.includes(58) && decoded.toString("base64").replace(/=+$/, "") === credential.replace(/=+$/, "")
+    .replace(new RegExp(String.raw`\bBasic\s+([A-Za-z0-9+/=]+${escapedTail})`, "gi"), (match, credential: string) => {
+      const valid = (candidate: string): boolean => {
+        const decoded = Buffer.from(candidate, "base64");
+        return decoded.includes(58) && decoded.toString("base64").replace(/=+$/, "") === candidate.replace(/=+$/, "");
+      };
+      return valid(decodedCredential(credential)) || valid(credential.split("\\")[0])
         ? "<redacted-authorization>" : match;
     })
     .replace(continuedCredential(/\b(?:NTLM|Negotiate|ApiKey)\s+[^\s,;}"'\x60\\]+/gi), "<redacted-authorization>")
     .replace(new RegExp(String.raw`(^|[^A-Za-z0-9]|\\[nrt])(${sensitiveFieldPattern})(?:\s|\\[nrt])*[:=](?:\s|\\[nrt])*Token\s+[^\s,;}"'\x60\\]+`, "gi"), "$1$2: <redacted-authorization>")
-    .replace(continuedCredential(/\bToken\s+[A-Za-z0-9._~+/-]{24,}=*(?![A-Za-z0-9._~+/=-])/gi), "Token <redacted>")
-    .replace(continuedCredential(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g), "<redacted>");
+    .replace(new RegExp(String.raw`\bToken\s+(${credentialAtom}+${escapedTail})`, "gi"), (match, credential: string) =>
+      [decodedCredential(credential), credential.split("\\")[0]].some(candidate => /^[A-Za-z0-9._~+/-]{24,}=*$/.test(candidate))
+        ? "Token <redacted>" : match)
+    .replace(new RegExp(String.raw`[A-Za-z0-9_-](?:[A-Za-z0-9_.-]|${escapeAtom})*`, "g"), candidate => {
+      const decoded = decodedCredential(candidate);
+      const segments = decoded.split(".");
+      let offset = 0;
+      for (let index = 0; index + 2 < segments.length; index += 1) {
+        let start = segments[index].indexOf("eyJ");
+        while (start > 0 && segments[index][start - 1] !== "-") start = segments[index].indexOf("eyJ", start + 3);
+        if (start >= 0 && (start === 0 || segments[index][start - 1] === "-") &&
+          /^eyJ[\w-]+$/.test(segments[index].slice(start)) && /^[\w-]+$/.test(segments[index + 1]) && /^[\w-]+$/.test(segments[index + 2])) {
+          return decoded.slice(0, offset + start) + "<redacted>";
+        }
+        offset += segments[index].length + 1;
+      }
+      return candidate;
+    });
   return redactedSchemes
     .replace(/\bDigest\s+(?=[a-z][\w-]*\*?\s*=)[^\r\n]*/gi, "<redacted-authorization>")
     .replace(/\b(?:AccountKey|SharedAccessKey|Ocp-Apim-Subscription-Key|x-functions-key)\s*=\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^;\s,}]+)/gi, "<redacted-key>")
-    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/gi, sanitizeUrl)
+    .replace(redactedSchemes.includes("://") ? /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/gi : /(?!)/g, sanitizeUrl)
     .replace(/([?&;])(sv|se|sp|sr|sig|signature|skoid|sktid|skt|ske|sks|skv)=([^&#;\s]+)/gi, (_match, prefix: string, key: string) => `${prefix}${key}=<redacted>`)
-    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "<redacted-email>")
+    .replace(redactedSchemes.includes("@") ? /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi : /(?!)/g, "<redacted-email>")
     .replace(homePathPattern, "<redacted-home>")
     .replace(/[\u0000-\u0009\u000b-\u001f\u007f\u2028\u2029]+/g, " ")
     .replace(/[ \t]+/g, " ").trim();

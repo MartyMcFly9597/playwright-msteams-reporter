@@ -82,7 +82,7 @@ interface Key {
   sensitive: boolean;
 }
 
-function decodeStringEscapes(value: string): { decoded: string; valid: boolean } {
+export function decodeStringEscapes(value: string): { decoded: string; valid: boolean } {
   let valid = true;
   const decoded = value.replace(/\\(?:u\{([a-f0-9]{1,6})\}|u([a-f0-9]{4})|x([a-f0-9]{2})|\r\n|([\s\S]))/gi,
     (escape, point: string, unicode: string, hex: string, character: string, offset: number) => {
@@ -178,7 +178,13 @@ function secretEnd(value: string, start: number, structured: boolean, parameterP
     if (/[\r\n]/.test(character)) return index;
     if (/[?&]/.test(parameterPrefix) && /\s/.test(character)) return index;
     if (parameterPrefix === ";" && character === ";" && readKey(value, skipWhitespace(value, index + 1), ends)) return index;
-    if (!structured && /\s/.test(character) && /[\[{]/.test(value[skipWhitespace(value, index)] ?? "")) return index;
+    if (!structured && /\s/.test(character)) {
+      let next = index;
+      while (next < value.length && /[^\S\r\n]/.test(value[next])) next += 1;
+      if (/[\[{]/.test(value[next] ?? "")) return index;
+      index = next;
+      continue;
+    }
     if (structured && isStructuredBoundary(value, index, ends)) return index;
     if (structured && /[}\]]/.test(character)) {
       while (index < value.length && /[}\]]/.test(value[index])) index += 1;

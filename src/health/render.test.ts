@@ -5,6 +5,50 @@ import { aggregateHealth, compileCategories } from "./aggregate";
 import { buildHealthMessage, sanitizeHealthText } from "./render";
 
 describe("health card rendering", () => {
+  it('preserves empty text and newline boundaries', () => {
+    expect(sanitizeHealthText('', 8000, undefined, undefined, false)).toBe('');
+    expect(sanitizeHealthText('Expected: ""', 8000, undefined, undefined, false)).toBe('Expected: ""');
+    expect(sanitizeHealthText('password=hunter2 \nTimeout waiting for selector', 8000, undefined, undefined, false))
+      .toContain('Timeout waiting for selector');
+  });
+
+  it.each([
+    ['trace-eyJheader.payload.PRIVATE_SIGNATURE', 'PRIVATE_SIGNATURE'],
+    ['ab-xeyJ-eyJheader.payload.PRIVATE_SIGNATURE', 'PRIVATE_SIGNATURE'],
+    [String.raw`Basic YWxpY2U6\u{5f}-PRIVATE_SUFFIX`, 'PRIVATE_SUFFIX'],
+    [String.raw`Token abcdefghijklmnopqrstuvwxyz\u{3a}PRIVATE_SUFFIX`, 'PRIVATE_SUFFIX'],
+    [String.raw`Token abcdefghijklmnopqrstuvwxyz0123\xZZ`, 'abcdefghijklmnopqrstuvwxyz'],
+  ])('retains prior credential detection: %s', (input, secret) => {
+    expect(sanitizeHealthText(input, 8000, undefined, undefined, false)).not.toContain(secret);
+  });
+
+  it.each([
+    ['Basic YWxpY2U' + String.raw`\u{36}c2VjcmV0`, 'c2VjcmV0'],
+    ['Token ' + 'a'.repeat(23) + String.raw`\u{61}` + 'b'.repeat(8), 'bbbbbbbb'],
+    [String.raw`eyJheader.payload.signature\u{5F}PRIVATE_SUFFIX`, 'PRIVATE_SUFFIX'],
+    [String.raw`eyJheader.pay\u005fload.PRIVATE_SIGNATURE`, 'PRIVATE_SIGNATURE'],
+    [String.raw`Token abcdefghij\u005fklmnopqrstuvwxyz_PRIVATE`, '_PRIVATE'],
+  ])('redacts complete decoded authentication candidates: %s', (original, secret) => {
+    for (const input of [original, JSON.stringify({ message: original, other: 'visible' })]) {
+      expect(sanitizeHealthText(input, 16000, undefined, undefined, false)).not.toContain(secret);
+    }
+  });
+
+  it.each(['jwt', 'spaces'])('bounds repeated %s candidate scanning', kind => {
+    const script = String.raw`
+      require.extensions['.ts'] = (module, filename) => module._compile(require('typescript').transpileModule(
+        require('node:fs').readFileSync(filename, 'utf8'), { compilerOptions: { module: 1, target: 9 } }
+      ).outputText, filename);
+      const input = process.argv[1] === 'jwt' ? 'eyJ-'.repeat(32000) : 'password=x' + ' '.repeat(32000) + 'y';
+      require('./src/health/render.ts').sanitizeHealthText(input, 300, undefined, undefined, false);
+    `;
+    const result = spawnSync(process.execPath, ['-e', script, kind], {
+      cwd: resolve(__dirname, '../..'), encoding: 'utf8', timeout: 5000,
+    });
+    expect({ error: result.error?.message, stderr: result.stderr, status: result.status })
+      .toEqual({ error: undefined, stderr: '', status: 0 });
+  });
+
   it.each(['ApiKey FIRST', 'Bearer FIRST', 'Basic YWxpY2U6', 'Token abcdefghijklmnopqrstuvwxyz'])
   ('redacts code-point escape continuations before losing the scheme: %s', prefix => {
     let input = JSON.stringify({ message: prefix + String.raw`\u{5f}PRIVATE_SUFFIX`, other: 'visible' });
