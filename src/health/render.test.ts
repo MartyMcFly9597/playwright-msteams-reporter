@@ -5,6 +5,54 @@ import { aggregateHealth, compileCategories } from "./aggregate";
 import { buildHealthMessage, sanitizeHealthText } from "./render";
 
 describe("health card rendering", () => {
+  it('keeps string ownership in log-prefixed JSON fragments', () => {
+    const object = JSON.stringify({ message: 'DB_PASSWORD=FIRST,region=PRIVATE_SUFFIX token=', other: 'visible' });
+    for (const prefix of ['Received: ', 'Error output: ']) {
+      const sanitized = sanitizeHealthText(prefix + object, 8000, undefined, undefined, false);
+      expect(sanitized).not.toContain('PRIVATE_SUFFIX');
+      expect(sanitized).toContain('visible');
+    }
+  });
+
+  it('sanitizes assignment-bearing sensitive keys before emitting them', () => {
+    let input = JSON.stringify({ 'token=PRIVATE_PASSWORD': 'diagnostic', other: 'visible' });
+    for (let layer = 0; layer <= 2; layer += 1) {
+      const sanitized = sanitizeHealthText(input, 16000, undefined, undefined, false);
+      expect(sanitized).not.toContain('PRIVATE_PASSWORD');
+      expect(sanitized).toContain('visible');
+      input = JSON.stringify(input);
+    }
+  });
+
+  it.each([
+    String.raw`ApiKey FIRST\u005fPRIVATE_SUFFIX`,
+    String.raw`Bearer FIRST\u005fPRIVATE_SUFFIX`,
+    String.raw`Token abcdefghijklmnopqrstuvwxyz\u005fPRIVATE_SUFFIX`,
+    String.raw`eyJheader.payload.signature\u005fPRIVATE_SUFFIX`,
+  ])('redacts escape-continued credential values: %s', credential => {
+    let input = '{"message":"' + credential + '","other":"visible"}';
+    for (let layer = 0; layer <= 2; layer += 1) {
+      const sanitized = sanitizeHealthText(input, 16000, undefined, undefined, false);
+      expect(sanitized).not.toContain('PRIVATE_SUFFIX');
+      expect(sanitized).toContain('visible');
+      input = JSON.stringify(input);
+    }
+  });
+
+  it.each([
+    String.raw`ApiKey PRIVATE_CREDENTIAL\nretry`,
+    String.raw`Bearer PRIVATE_CREDENTIAL\tinfo`,
+    String.raw`Token abcdefghijklmnopqrstuvwxyz_PRIVATE_CREDENTIAL\nretry`,
+    String.raw`eyJheader.payload.PRIVATE_CREDENTIAL\nretry`,
+    String.raw`ApiKey FIRST\u005fPRIVATE_CREDENTIAL`,
+    JSON.stringify({ 'line1\nBearer\tPRIVATE_CREDENTIAL': 'diagnostic' }),
+    String.raw`{"Be\u0061rer PRIVATE_TOKEN":"diagnostic"}`,
+  ])('retains raw credential and sensitive-key protection: %s', input => {
+    const sanitized = sanitizeHealthText(input, 16000, undefined, undefined, false);
+    expect(sanitized).not.toContain('PRIVATE_CREDENTIAL');
+    expect(sanitized).not.toContain('PRIVATE_TOKEN');
+  });
+
   it('keeps JSON message ownership when an embedded assignment ends empty', () => {
     const input = JSON.stringify({ message: 'DB_PASSWORD=FIRST,region=PRIVATE_SUFFIX token=', other: 'visible' });
     const sanitized = sanitizeHealthText(input, 8000, undefined, undefined, false);

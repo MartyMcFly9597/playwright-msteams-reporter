@@ -211,6 +211,7 @@ export function redactSensitiveFields(
   const containers: string[] = [];
   const ends = indexQuoteEnds(value);
   let jsonDocument = false;
+  let fragmentCheckedThrough = 0;
   if (/^\s*[\[{]/.test(value)) {
     try { JSON.parse(value); jsonDocument = true; } catch {}
   }
@@ -259,11 +260,26 @@ export function redactSensitiveFields(
         continue;
       }
     }
+    if (!jsonDocument && index >= fragmentCheckedThrough && (character === "{" || character === "[")) {
+      const end = containerEnd(value, index, 0, ends);
+      fragmentCheckedThrough = end;
+      const fragment = value.slice(index, end);
+      let validFragment = false;
+      try { JSON.parse(fragment); validFragment = true; } catch {}
+      if (validFragment) {
+        output += value.slice(copiedThrough, index) + sanitizeDecoded(fragment, layer + 1);
+        copiedThrough = end;
+        index = end;
+        continue;
+      }
+    }
     const key = readKey(value, index, ends);
     if (key?.sensitive) {
       const start = skipWhitespace(value, key.separator + 1);
       const end = secretEnd(value, start, containers.at(-1) === "{", value[index - 1] ?? "", ends);
-      output += value.slice(copiedThrough, index) + value.slice(index, key.end) + ": <redacted>";
+      const keyText = value.slice(index, key.end);
+      const safeKey = sanitizeDecoded(keyText, layer + 1);
+      output += value.slice(copiedThrough, index) + safeKey + ": <redacted>";
       copiedThrough = end;
       index = end;
       continue;
