@@ -38,6 +38,26 @@ describe("optional health reporter", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it("keeps the developer report as the default style", async () => {
+    const reporter = new HealthReporter({ webhookUrl, quiet: true });
+    reporter.onBegin({} as FullConfig, suite("unexpected"));
+    await reporter.onEnd({ ...result, status: "failed" });
+    const body = String(jest.mocked(global.fetch).mock.calls[0][1]?.body);
+    expect(body).toContain("Cause undetermined");
+    expect(body).not.toContain("Next:");
+  });
+
+  it("sends the concise CEO style from the live test results", async () => {
+    const reporter = new HealthReporter({ webhookUrl, reportType: "ceo", environment: "QA", title: "Booking", quiet: true });
+    reporter.onBegin({} as FullConfig, suite("unexpected", ["sso-auth"]));
+    await reporter.onEnd({ ...result, status: "failed" });
+    const body = JSON.parse(jest.mocked(global.fetch).mock.calls[0][1]?.body as string);
+    const text = body.attachments[0].content.body.map((entry: { text: string }) => entry.text).join("\n");
+    expect(text).toContain("QA - Booking");
+    expect(text).toContain("Authentication/access issues (1)");
+    expect(text).toContain("Review identity-provider and gateway access policies.");
+  });
+
   it("reports signal evidence on the final successful flaky attempt", async () => {
     const reporter = new HealthReporter({ webhookUrl, quiet: true });
     const flakySuite = { allTests: () => [{
@@ -187,7 +207,8 @@ describe("optional health reporter", () => {
   });
 
   it.each([
-    { annotationPrefix: "" }, { maxTests: -1 }, { maxTests: 1.5 }, { maxPayloadBytes: 4095 },
+    { annotationPrefix: "" }, { reportType: "executive" }, { ceoMappingsFile: 5 },
+    { maxTests: -1 }, { maxTests: 1.5 }, { maxPayloadBytes: 4095 },
     { maxPayloadBytes: 26001 }, { resultsLinkPolicy: "unknown" }, { webhookType: "unknown" },
   ])("rejects invalid options without echoing values", (options) => {
     expect(() => new HealthReporter({ webhookUrl, ...options } as never)).toThrow(/Invalid health|webhook/);

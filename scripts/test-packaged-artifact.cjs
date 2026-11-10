@@ -136,9 +136,11 @@ import { captureEnvSignals, type EnvSignalCaptureOptions } from "@martymcfly9597
 import type { HealthReporterOptions } from "@martymcfly9597/playwright-msteams-reporter/healthReporter";
 const captureOptions: EnvSignalCaptureOptions = { includeHosts: ["app.acme.example"], retainOnPass: true };
 const reporterOptions: HealthReporterOptions = { webhookUrlEnv: "PACKED_WEBHOOK", quiet: true };
+const ceoOptions: HealthReporterOptions = { reportType: "ceo", ceoMappingsFile: "./config/ceo-report-mappings.json" };
 test("packed TypeScript declarations resolve", async () => {
   expect(captureOptions.includeHosts).toEqual(["app.acme.example"]);
   expect(reporterOptions.webhookUrlEnv).toBe("PACKED_WEBHOOK");
+  expect(ceoOptions.reportType).toBe("ceo");
   expect(typeof captureEnvSignals).toBe("function");
 });
 `);
@@ -162,8 +164,9 @@ import type { EnvSignalCaptureOptions } from "@martymcfly9597/playwright-msteams
 import type { HealthReporterOptions } from "@martymcfly9597/playwright-msteams-reporter/healthReporter";
 const original: MsTeamsReporterOptions = { webhookUrlEnv: "PACKED_WEBHOOK", webhookType: "msteams" };
 const health: HealthReporterOptions = { webhookUrlEnv: "PACKED_WEBHOOK", webhookType: "powerautomate" };
+const ceo: HealthReporterOptions = { reportType: "ceo", ceoMappingsFile: "./config/ceo-report-mappings.json" };
 const capture: EnvSignalCaptureOptions = { includeHosts: ["app.acme.example"] };
-void [original, health, capture];
+void [original, health, ceo, capture];
 `);
   writeFileSync(path.join(tests, "types-esm-consumer.mts"), `
 import MsTeamsReporter, { type MsTeamsReporterOptions } from "@martymcfly9597/playwright-msteams-reporter";
@@ -280,6 +283,7 @@ async function verifyNodeEsmImports(consumer) {
     'if (typeof reporter !== "function" || typeof health !== "function" || typeof captureEnvSignals !== "function" || typeof models !== "object") process.exit(1);',
     'new reporter({ webhookUrl: "", quiet: true });',
     'new health({ webhookUrl: "", quiet: true });',
+    'new health({ webhookUrl: "", reportType: "ceo" });',
   ].join("\n");
   await execute(process.execPath, ["--input-type=module", "-e", source], {
     cwd: consumer, env: childEnvironment(), timeout: 30000, windowsHide: true, maxBuffer: 2 * 1024 * 1024,
@@ -338,7 +342,7 @@ async function main() {
     const [packed] = JSON.parse(packOutput);
     const tarball = path.join(directory, packed.filename);
     const files = new Set(packed.files.map(file => file.path));
-    for (const file of ["dist/index.js", "dist/index.d.ts", "dist/esm/index.mjs", "dist/esm/index.d.mts", "dist/healthReporter.js", "dist/healthReporter.d.ts", "dist/esm/healthReporter.mjs", "dist/esm/healthReporter.d.mts", "dist/healthCapture.js", "dist/healthCapture.d.ts", "dist/models/index.js"]) {
+    for (const file of ["dist/index.js", "dist/index.d.ts", "dist/esm/index.mjs", "dist/esm/index.d.mts", "dist/healthReporter.js", "dist/healthReporter.d.ts", "dist/esm/healthReporter.mjs", "dist/esm/healthReporter.d.mts", "dist/healthCapture.js", "dist/healthCapture.d.ts", "dist/models/index.js", "ceo-report-mappings.json"]) {
       assert(files.has(file), `Packed artifact is missing ${file}`);
     }
     const packageExports = require(path.join(root, "package.json")).exports;
@@ -348,7 +352,7 @@ async function main() {
     }
     assert(!Object.keys(packageExports).some(subpath => subpath.startsWith("./dist/")), "Build output paths must not be public package exports");
     assert(!packed.files.some(file => /\.test\.(?:js|d\.ts)$/.test(file.path)), "Packed artifact must not contain compiled tests");
-    const allowedRootFiles = new Set(["package.json", "README.md", "CHANGELOG.md", "LICENSE"]);
+    const allowedRootFiles = new Set(["package.json", "README.md", "CHANGELOG.md", "LICENSE", "ceo-report-mappings.json"]);
     const unexpectedFiles = packed.files.filter(file =>
       !allowedRootFiles.has(file.path) && !/^dist\/.+\.(?:js|mjs|d\.ts|d\.mts)$/.test(file.path)
     );

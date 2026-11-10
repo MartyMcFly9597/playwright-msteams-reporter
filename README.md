@@ -161,7 +161,73 @@ receiving service may still display messages in a different order.
 The health reporter always sends the same Adaptive Card payload format; its
 `webhookType` option is validated for compatibility but does not change the card.
 
-To roll back the optional health report, remove its second reporter entry. To stop automatic evidence capture without changing reporting, remove or disable the consumer fixture that calls `captureEnvSignals()`. Removing `record()` calls stops only manually added signals; the original reporter remains independent.
+#### CEO impact-and-actions report
+
+The health reporter can also send a concise report for a leadership audience.
+It uses the live Playwright suite and results supplied to the reporter; it does
+not read or require the JSON reporter's output. `reportType` defaults to
+`"dev"`, preserving the existing health card. Set it to `"ceo"` to show a
+compact outcome line followed by up to three issue groups and their actions.
+Failures that do not match a configured issue are grouped by sanitized error
+text and labeled with an unconfirmed cause and a neutral review action.
+
+The package's starter rules are in [`ceo-report-mappings.json`](./ceo-report-mappings.json).
+An app can pass its own JSON file with `ceoMappingsFile`; its path is resolved
+from the Playwright process working directory. App rules with an existing `id`
+replace that built-in rule, new IDs add rules, and `{ "id": "...", "enabled": false }`
+disables a built-in rule. Rules match case-insensitive literal substrings in
+the sanitized test title, error, and signal kinds. The first matching rule is
+used for each failed test. Use `{count}` in `impact` to insert the number of
+matched tests.
+
+For example, both styles can be posted independently after the standard result
+card, or register only the CEO entry (or neither health entry):
+
+```javascript
+reporter: [
+  ["@martymcfly9597/playwright-msteams-reporter", { webhookType: "powerautomate" }],
+  ["@martymcfly9597/playwright-msteams-reporter/healthReporter", {
+    webhookType: "powerautomate",
+    reportType: "dev",
+  }],
+  ["@martymcfly9597/playwright-msteams-reporter/healthReporter", {
+    webhookType: "powerautomate",
+    reportType: "ceo",
+    environment: "QA",
+    ceoMappingsFile: "./config/ceo-report-mappings.json",
+    linkToResultsUrl: process.env.RESULTS_URL,
+  }],
+]
+```
+
+App mapping files use the same structure as the package defaults:
+
+```json
+{
+  "rules": [
+    {
+      "id": "aeroplan-points",
+      "match": ["AE points are 0", "zero Aeroplan points"],
+      "label": "Aeroplan points",
+      "impact": "Redemption checks affected: {count}.",
+      "action": "Top up or replace the affected test accounts."
+    },
+    {
+      "id": "app-specific-login",
+      "match": ["EMP unable to login"],
+      "label": "Employee login",
+      "impact": "Employee booking checks could not sign in: {count}.",
+      "action": "Check the employee login link and test account."
+    }
+  ]
+}
+```
+
+Keep mappings factual and action-oriented. Unmapped error text is sanitized
+before it is displayed, and the report does not send test details to an AI
+service.
+
+To disable one health-card style, remove that reporter entry; remove all health reporter entries to disable the health report. To stop automatic evidence capture without changing reporting, remove or disable the consumer fixture that calls `captureEnvSignals()`. Removing `record()` calls stops only manually added signals; the original reporter remains independent.
 
 Signals are consumer-provided Playwright annotations using the
 `env-signal:<kind>` prefix by default. The reporter does not capture browser or

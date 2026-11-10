@@ -1,0 +1,60 @@
+{
+  "rules": [
+    {
+      "id": "authentication-access",
+      "match": ["sso-auth", "sso-auth-issuer-mismatch", "http-auth", "403 forbidden", "401 unauthorized", "api gateway policy denial"],
+      "label": "Authentication/access issues",
+      "impact": "Authentication or access issues affected {count} checks.",
+      "action": "Review identity-provider and gateway access policies."
+    },
+    {
+      "id": "flight-inventory",
+      "match": ["409 v106", "selected flight unavailable", "flight inventory conflict"],
+      "label": "Flight availability",
+      "impact": "Unavailable flight inventory affected {count} booking checks.",
+      "action": "Refresh test inventory and confirm flight availability."
+    },
+    {
+      "id": "aeroplan-points",
+      "match": ["0 aeroplan points", "zero aeroplan points", "points are 0", "1,000-point minimum", "minimum-points state"],
+      "label": "Aeroplan points",
+      "impact": "Aeroplan redemption checks affected: {count}.",
+      "action": "Top up or replace the affected test accounts."
+    },
+    {
+      "id": "promo-code",
+      "match": ["promo code invalid", "invalid promo code"],
+      "label": "Promo code",
+      "impact": "Booking checks affected by an invalid promo code: {count}.",
+      "action": "Refresh the promo-code test data."
+    },
+    {
+      "id": "employee-login",
+      "match": ["emp unable to login", "employee login failed"],
+      "label": "Employee login",
+      "impact": "Employee booking checks could not sign in: {count}.",
+      "action": "Check the employee login link and test account."
+    },
+    {
+      "id": "deposit-option",
+      "match": ["deposit option not available", "deposit option unavailable"],
+      "label": "Deposit option",
+      "impact": "Booking checks could not select a deposit option: {count}.",
+      "action": "Review deposit availability and update test data."
+    },
+    {
+      "id": "backend-error",
+      "match": ["http 500", "returned 500", "internal server error", "http-5xx"],
+      "label": "Backend service errors",
+      "impact": "Booking checks encountered a backend error: {count}.",
+      "action": "Review service health and recent deployments."
+    },
+    {
+      "id": "test-script-data",
+      "match": ["script /test data issue", "script/test data issue"],
+      "label": "Test script or data",
+      "impact": "Checks were affected by a test script or data issue: {count}.",
+      "action": "Review the affected test scripts and test data."
+    }
+  ]
+}
