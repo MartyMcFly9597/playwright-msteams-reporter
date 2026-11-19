@@ -109,6 +109,7 @@ export interface HealthFailure {
   result?: TestResult;
   assessment: Assessment;
   categories: string[];
+  signalKinds?: string[];
 }
 export interface HealthSummary {
   outcomes: { expected: number; unexpected: number; flaky: number; skipped: number };
@@ -182,7 +183,13 @@ function recordUnexpected(test: TestCase, result: TestResult | undefined, curren
   const categories = evidence.map(item => item.category);
   const assessment = assess(categories);
   state.summary.assessments[assessment] += 1;
-  state.summary.failures.push({ test, result, assessment, categories: [...new Set(categories.map(category => category.name))].sort(compare) });
+  state.summary.failures.push({
+    test,
+    result,
+    assessment,
+    categories: [...new Set(categories.map(category => category.name))].sort(compare),
+    signalKinds: currentKinds.filter(kind => !taxonomy.forKind(kind).noise),
+  });
   // Assessment keeps every match; display counts once per category and kind for this test.
   const counted = new Set<string>();
   for (const { kind, category } of evidence) {
