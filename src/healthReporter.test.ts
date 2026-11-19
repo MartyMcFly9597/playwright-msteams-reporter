@@ -54,7 +54,7 @@ describe("optional health reporter", () => {
     const body = JSON.parse(jest.mocked(global.fetch).mock.calls[0][1]?.body as string);
     const text = body.attachments[0].content.body.map((entry: { text: string }) => entry.text).join("\n");
     expect(text).toContain("QA - Booking");
-    expect(text).toContain("Authentication/access issues (1)");
+    expect(text).toContain("Authentication/access issues \\(1\\)");
     expect(text).toContain("Review identity-provider and gateway access policies.");
   });
 

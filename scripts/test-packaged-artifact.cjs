@@ -161,12 +161,14 @@ for (let index = 0; index < 12; index += 1) {
   writeFileSync(path.join(tests, "types-consumer.ts"), `
 import type { MsTeamsReporterOptions } from "@martymcfly9597/playwright-msteams-reporter";
 import type { EnvSignalCaptureOptions } from "@martymcfly9597/playwright-msteams-reporter/healthCapture";
-import type { HealthReporterOptions } from "@martymcfly9597/playwright-msteams-reporter/healthReporter";
+import type { CeoIssueMapping, HealthReportType, HealthReporterOptions } from "@martymcfly9597/playwright-msteams-reporter/healthReporter";
 const original: MsTeamsReporterOptions = { webhookUrlEnv: "PACKED_WEBHOOK", webhookType: "msteams" };
 const health: HealthReporterOptions = { webhookUrlEnv: "PACKED_WEBHOOK", webhookType: "powerautomate" };
 const ceo: HealthReporterOptions = { reportType: "ceo", ceoMappingsFile: "./config/ceo-report-mappings.json" };
+const reportType: HealthReportType = "ceo";
+const mapping: CeoIssueMapping = { id: "service", match: ["service unavailable"], label: "Service", impact: "Affected {count} checks", action: "Investigate." };
 const capture: EnvSignalCaptureOptions = { includeHosts: ["app.acme.example"] };
-void [original, health, ceo, capture];
+void [original, health, ceo, reportType, mapping, capture];
 `);
   writeFileSync(path.join(tests, "types-esm-consumer.mts"), `
 import MsTeamsReporter, { type MsTeamsReporterOptions } from "@martymcfly9597/playwright-msteams-reporter";

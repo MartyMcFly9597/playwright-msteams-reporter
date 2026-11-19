@@ -1,7 +1,7 @@
 import type { FullConfig, FullResult, Reporter, Suite, TestError } from "@playwright/test/reporter";
 import type { HealthReporterOptions } from "../healthReporter.js";
 
-export type { ErrorPattern, HealthCategory, HealthReporterOptions } from "../healthReporter.js";
+export type { CeoIssueMapping, ErrorPattern, HealthCategory, HealthReportType, HealthReporterOptions } from "../healthReporter.js";
 
 declare class HealthReporter implements Reporter {
   constructor(options?: HealthReporterOptions);
